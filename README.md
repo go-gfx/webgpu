@@ -4,9 +4,9 @@ WebGPU for Go in the browser (`GOOS=js GOARCH=wasm`): a typed API named after
 the [WebGPU specification](https://www.w3.org/TR/webgpu/), usable from any Go
 program that runs in a window or a worker.
 
-**Status: in development, not released.** The direct API and batched command
-encoding (one JavaScript call per submit) are in place; OffscreenCanvas
-surfaces and the first release are next.
+**Status: in development, not released.** The direct API, batched command
+encoding (one JavaScript call per submit) and OffscreenCanvas surfaces are in
+place; the first release is next.
 
 ```go
 import "github.com/go-gfx/webgpu"
@@ -24,6 +24,34 @@ import "github.com/go-gfx/webgpu"
 - Render passes (indexed and instanced draws, indirect draws, viewport,
   scissor), render bundles, compute passes.
 - Error scopes and uncaptured errors as Go errors.
+- Surfaces: an OffscreenCanvas with a WebGPU context, frames out as
+  `ImageBitmap`s, and a signal for browsers that have no such context.
+
+## Surfaces
+
+```go
+if err := webgpu.CanvasSupport(); err != nil {
+	// errors.Is(err, webgpu.ErrNoCanvasContext): use another renderer
+}
+s, err := device.NewSurface(webgpu.SurfaceDescriptor{Width: 640, Height: 480})
+tex, err := s.CurrentTexture()     // render into a view of it
+bitmap, err := s.Present()         // transferToImageBitmap: post it to the page, or close it
+```
+
+A standalone OffscreenCanvas never shows itself (the specification says the
+canvas is presented automatically only for a placeholder canvas): `Present`
+moves the frame out as an `ImageBitmap` without a copy, for a worker to post to
+its page. `NewSurfaceFromCanvas` takes a canvas the page transferred with
+`transferControlToOffscreen`; the browser presents that one by itself. The
+surface size is bounded by the quota (`SurfaceWidth`, `SurfaceHeight`).
+
+`CanvasSupport` probes `getContext("webgpu")` on an `OffscreenCanvas`. MDN's
+compatibility data lists that context in Chrome 113 (every platform from 144),
+Safari 26, and Firefox 141 on Windows only. Where it returns
+`ErrNoCanvasContext`, a program should fall back to a non-WebGPU renderer.
+The browser tests read each presented frame back through a 2D canvas, pixel by
+pixel, so a blank frame fails them. That includes the Linux SwiftShader lane,
+where headless Chromium needs Skia on Vulkan to present at all.
 
 ## Batched encoding: one JavaScript call per submit
 
@@ -125,10 +153,13 @@ runs of `BenchmarkFrame`:
 | 1000 | 491 µs | 85 µs | 32 µs |
 | 5000 | 2320 µs | 380 µs | 138 µs |
 
-Batching is 5.8 to 6.1 times faster than direct calls from 1000 draws up. It
-is still 2.7 times the JavaScript floor: recording costs about 40 ns per draw
-in wasm (10 ns natively, `BenchmarkRecordDraws`), and the rest is the replay
-itself.
+Batching is 5.8 to 6.1 times faster than direct calls from 1000 draws up. The
+design estimated about 15 times, from a prototype that recorded with no checks
+and no object table; the checks and the table cost the difference. It is still
+2.7 times the JavaScript floor: recording costs about 40 ns per draw in wasm
+(10 ns natively, `BenchmarkRecordDraws`), and the rest is the replay itself.
+All of these timings were taken with the machine's load between 10 and 16, so
+they are indicative, not final.
 
 `WriteBuffer` copies through a staging array the device reuses; allocating a
 fresh `Uint8Array` per call, as is common, was 3 to 4 times slower. Whether

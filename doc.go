@@ -58,6 +58,14 @@
 // device; several devices may share one. Nothing is reachable except
 // through a Device the embedder created.
 //
+// # Surfaces
+//
+// A Surface is an OffscreenCanvas with a WebGPU context: render into
+// CurrentTexture, and Present moves the frame out as an ImageBitmap
+// (standalone canvases are never presented by the browser). CanvasSupport
+// returns ErrNoCanvasContext where the browser has no such context
+// (Firefox outside Windows): the signal to fall back to another renderer.
+//
 // Outside GOOS=js the package compiles (descriptors, validation, quotas)
 // and Navigator does not exist.
 package webgpu
