@@ -49,8 +49,11 @@ jobs:
         with: { go-version: '1.27.3' }
       - run: go version
       - run: go build ./...
-      - run: go test -race -count=1 -coverprofile=cover.out ./...
-      - run: go run github.com/go-fleettools/fleettools/cmd/covblocks@v0.46.0 cover.out
+      # bash on every OS: PowerShell splits -coverprofile=cover.out at the dot.
+      - shell: bash
+        run: go test -race -count=1 -coverprofile=cover.out ./...
+      - shell: bash
+        run: go run github.com/go-fleettools/fleettools/cmd/covblocks@v0.46.0 cover.out
 
   # Copy and size checks take untrusted arguments: fuzzed on every change
   # (the copy check against an unbounded-integer oracle). A target that
@@ -97,7 +100,9 @@ jobs:
           # Without these flags headless Linux Chromium tears the WebGPU
           # instance down at the first canvas configure and presents
           # transparent frames (root-caused in go-wasmcontainers/gpu v0.5.1).
-          - { lane: 'Linux, fallback (SwiftShader)', os: ubuntu-latest, require: '0', fallback: '1', args: '--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader' }
+          # ubuntu-24.04, not -latest: Playwright does not support
+          # Chromium on Ubuntu 26.04 (measured on this lane, 2026-10-29).
+          - { lane: 'Linux, fallback (SwiftShader)', os: ubuntu-24.04, require: '0', fallback: '1', args: '--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader' }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
