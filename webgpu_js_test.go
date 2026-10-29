@@ -228,6 +228,7 @@ type scene struct {
 	pipe               *RenderPipeline
 	group              *BindGroup
 	vb, ib, readback   *Buffer
+	instances          *Buffer
 }
 
 func newScene(t *testing.T, d *Device) *scene {
@@ -272,6 +273,7 @@ func newScene(t *testing.T, d *Device) *scene {
 	if err := q.WriteBuffer(inst, 0, f32s(0, 0.5, 0, 0, 1, 0.5, 0, 0, 0, 0.9, 0, 0)); err != nil {
 		t.Fatal(err)
 	}
+	s.instances = inst
 
 	bgl := must(d.CreateBindGroupLayout(BindGroupLayoutDescriptor{Entries: []BindGroupLayoutEntry{
 		{Binding: 0, Visibility: ShaderStageVertex, Buffer: &BufferBindingLayout{Type: BufferBindingTypeReadOnlyStorage}},
@@ -326,15 +328,25 @@ func (s *scene) frame(t *testing.T, draw func(*RenderPassEncoder)) []byte {
 	if err := p.End(); err != nil {
 		t.Fatal(err)
 	}
-	if err := enc.CopyTextureToBuffer(TexelCopyTextureInfo{Texture: s.target}, TexelCopyBufferInfo{Buffer: s.readback, Layout: TexelCopyBufferLayout{BytesPerRow: 256}},
-		Extent3D{Width: 16, Height: 16}); err != nil {
-		t.Fatal(err)
-	}
 	s.d.PushErrorScope(ErrorFilterValidation)
 	if err := s.d.Queue().Submit(must(enc.Finish())(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.d.PopErrorScope(ctx(t)); err != nil {
+		t.Fatal(err)
+	}
+	return s.readTarget(t)
+}
+
+// readTarget copies the render target out and returns its pixels.
+func (s *scene) readTarget(t *testing.T) []byte {
+	t.Helper()
+	enc := must(s.d.CreateCommandEncoder("readback"))(t)
+	if err := enc.CopyTextureToBuffer(TexelCopyTextureInfo{Texture: s.target}, TexelCopyBufferInfo{Buffer: s.readback, Layout: TexelCopyBufferLayout{BytesPerRow: 256}},
+		Extent3D{Width: 16, Height: 16}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.d.Queue().Submit(must(enc.Finish())(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.readback.MapAsync(ctx(t), MapModeRead, 0, 0); err != nil {

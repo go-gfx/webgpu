@@ -99,6 +99,7 @@ globalThis.fs = {
 };
 importScripts("wasm_exec.js");
 const go = new Go();
+globalThis.goRunner = go; // lets a benchmark reach the instance's memory
 go.argv = ARGV;
 go.env = ENV;
 go.exit = (code) => postMessage({ exit: code });

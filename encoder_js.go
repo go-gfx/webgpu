@@ -179,7 +179,7 @@ func setBindGroup(v js.Value, index uint32, g *BindGroup, offs []uint32) {
 // SetVertexBuffer is setVertexBuffer(slot, buffer, offset, size); size 0
 // binds to the end of the buffer. The range is checked.
 func (r *renderCommands) SetVertexBuffer(slot uint32, b *Buffer, offset, size uint64) {
-	if err := r.bufferRange("setVertexBuffer", b, BufferUsageVertex, "VERTEX", offset, &size); err != nil {
+	if err := bufferRange("setVertexBuffer", b, BufferUsageVertex, "VERTEX", offset, &size); err != nil {
 		r.fail(err)
 		return
 	}
@@ -189,27 +189,11 @@ func (r *renderCommands) SetVertexBuffer(slot uint32, b *Buffer, offset, size ui
 // SetIndexBuffer is setIndexBuffer(buffer, format, offset, size); size 0
 // binds to the end of the buffer. The range is checked.
 func (r *renderCommands) SetIndexBuffer(b *Buffer, format IndexFormat, offset, size uint64) {
-	if err := r.bufferRange("setIndexBuffer", b, BufferUsageIndex, "INDEX", offset, &size); err != nil {
+	if err := bufferRange("setIndexBuffer", b, BufferUsageIndex, "INDEX", offset, &size); err != nil {
 		r.fail(err)
 		return
 	}
 	r.v.Call("setIndexBuffer", b.v, string(format), offset, size)
-}
-
-func (r *renderCommands) bufferRange(op string, b *Buffer, usage BufferUsage, name string, offset uint64, size *uint64) error {
-	if b == nil {
-		return bounds(op, "nil buffer")
-	}
-	if err := checkUsage(op, b, usage, name); err != nil {
-		return err
-	}
-	if *size == 0 {
-		if offset > b.size {
-			return bounds(op, "offset %d past the buffer's %d bytes", offset, b.size)
-		}
-		*size = b.size - offset
-	}
-	return checkRange(op, b, offset, *size)
 }
 
 // Draw is draw(vertexCount, instanceCount, firstVertex, firstInstance).
@@ -226,7 +210,7 @@ func (r *renderCommands) DrawIndexed(indexCount, instanceCount, firstIndex uint3
 // DrawIndirect is drawIndirect(buffer, offset); the 16-byte record must
 // lie in the buffer.
 func (r *renderCommands) DrawIndirect(b *Buffer, offset uint64) {
-	if err := r.indirect("drawIndirect", b, offset, 16); err != nil {
+	if err := checkIndirect("drawIndirect", b, BufferUsageIndirect, offset, 16); err != nil {
 		r.fail(err)
 		return
 	}
@@ -236,24 +220,11 @@ func (r *renderCommands) DrawIndirect(b *Buffer, offset uint64) {
 // DrawIndexedIndirect is drawIndexedIndirect(buffer, offset); the
 // 20-byte record must lie in the buffer.
 func (r *renderCommands) DrawIndexedIndirect(b *Buffer, offset uint64) {
-	if err := r.indirect("drawIndexedIndirect", b, offset, 20); err != nil {
+	if err := checkIndirect("drawIndexedIndirect", b, BufferUsageIndirect, offset, 20); err != nil {
 		r.fail(err)
 		return
 	}
 	r.v.Call("drawIndexedIndirect", b.v, offset)
-}
-
-func (r *renderCommands) indirect(op string, b *Buffer, offset, n uint64) error {
-	if b == nil {
-		return bounds(op, "nil buffer")
-	}
-	if err := checkUsage(op, b, BufferUsageIndirect, "INDIRECT"); err != nil {
-		return err
-	}
-	if offset%4 != 0 {
-		return bounds(op, "offset %d is not a multiple of 4", offset)
-	}
-	return checkRange(op, b, offset, n)
 }
 
 // RenderPassEncoder is a GPURenderPassEncoder.
@@ -348,16 +319,7 @@ func (p *ComputePassEncoder) DispatchWorkgroups(x, y, z uint32) {
 // DispatchWorkgroupsIndirect is dispatchWorkgroupsIndirect(buffer,
 // offset); the 12-byte record must lie in the buffer.
 func (p *ComputePassEncoder) DispatchWorkgroupsIndirect(b *Buffer, offset uint64) {
-	var err error
-	switch {
-	case b == nil:
-		err = bounds("dispatchWorkgroupsIndirect", "nil buffer")
-	case offset%4 != 0:
-		err = bounds("dispatchWorkgroupsIndirect", "offset %d is not a multiple of 4", offset)
-	default:
-		err = checkRange("dispatchWorkgroupsIndirect", b, offset, 12)
-	}
-	if err != nil {
+	if err := checkIndirect("dispatchWorkgroupsIndirect", b, BufferUsageIndirect, offset, 12); err != nil {
 		if p.err == nil {
 			p.err = err
 		}

@@ -8,6 +8,8 @@ type jsValue struct{}
 
 type staging struct{}
 
+type recorderStage struct{}
+
 // ref stands for the browser object in a descriptor; outside the browser
 // it is the handle itself, which lets tests check what would be sent.
 func (o *object) ref() any { return o }

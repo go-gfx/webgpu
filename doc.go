@@ -19,6 +19,16 @@
 // Descriptors are Go structs; a zero field is left out of the dictionary so
 // the browser applies the specification's default.
 //
+// # Batched encoding
+//
+// A syscall/js call costs about ten times the WebGPU call it carries. A
+// Recorder records a whole submit as uint32 words in Go and Submit replays
+// it with one call into replay.js (ReplayJS, loaded once by
+// InstallReplay), which issues the WebGPU calls from JavaScript. Every
+// command is checked as in the direct API. Submissions are numbered on the
+// device's timeline (package timeline): WaitSubmitted(ctx, seq) waits for
+// the GPU, and completing a number completes every earlier one.
+//
 // # Errors
 //
 // WebGPU reports most mistakes asynchronously, as validation errors on the

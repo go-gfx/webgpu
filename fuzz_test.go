@@ -6,9 +6,41 @@
 package webgpu
 
 import (
+	"encoding/binary"
 	"math/big"
 	"testing"
 )
+
+// FuzzDecode: the stream reader (decode, and replay.js which mirrors it)
+// must never panic or read past the stream, whatever the words; an
+// accepted stream is exactly covered by its commands.
+func FuzzDecode(f *testing.F) {
+	var t0 testing.T
+	r, _ := recordAll(&t0)
+	b := make([]byte, 4*len(r.words))
+	for i, w := range r.words {
+		binary.LittleEndian.PutUint32(b[4*i:], w)
+	}
+	f.Add(b, uint32(len(r.data)), uint32(64))
+	f.Add([]byte{20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 21, 0, 0, 0, 40, 0, 0, 0}, uint32(0), uint32(1))
+	f.Fuzz(func(t *testing.T, raw []byte, ndata, nobj uint32) {
+		w := make([]uint32, len(raw)/4)
+		for i := range w {
+			w[i] = binary.LittleEndian.Uint32(raw[4*i:])
+		}
+		cmds, err := decode(w, ndata, func(id uint32) bool { return id <= nobj })
+		if err != nil {
+			return
+		}
+		n := 0
+		for _, c := range cmds {
+			n += 1 + len(c.args)
+		}
+		if n != len(w) {
+			t.Fatalf("commands cover %d of %d words", n, len(w))
+		}
+	})
+}
 
 // FuzzCheckTextureCopy: the arguments of WriteTexture come from untrusted
 // data (a game map's lightmaps, a container's call). Whatever they are,
