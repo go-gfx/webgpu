@@ -1,0 +1,151 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+permissions: { contents: read }
+
+jobs:
+  # A workflow that fails to parse reports no checks at all, which reads
+  # exactly like checks that have not started. actionlint is the first lane.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  lint:
+    name: gofmt and vet (host, js/wasm, runner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.3' }
+      - run: go version
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "::error::not gofmt-ed:"; echo "$out"; exit 1; fi
+      - run: go vet ./...
+      - run: GOOS=js GOARCH=wasm go vet ./...
+      - run: go -C internal/cmd/wasmbrowser vet ./...
+
+  # The descriptor, validation and quota code is platform-neutral and held
+  # to every block covered (covblocks: go tool cover -func rounds to one
+  # decimal and passes at 99.95%).
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.3' }
+      - run: go version
+      - run: go build ./...
+      - run: go test -race -count=1 -coverprofile=cover.out ./...
+      - run: go run github.com/go-fleettools/fleettools/cmd/covblocks@v0.46.0 cover.out
+
+  # Copy and size checks take untrusted arguments: fuzzed on every change
+  # (the copy check against an unbounded-integer oracle). A target that
+  # does not exist fails the lane.
+  fuzz:
+    name: fuzz smoke ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [FuzzCheckTextureCopy, FuzzTextureBytes]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.3' }
+      - run: go test -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 45s .
+
+  # 32-bit targets: sizes and offsets are uint64 arithmetic that must not
+  # depend on int being 64 bits.
+  test-386:
+    name: test (linux/386)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.3' }
+      - run: GOARCH=386 go test -count=1 ./...
+
+  # The calls themselves, in a dedicated worker of a real Chromium (the
+  # full browser in new headless mode: the headless shell offers no GPU).
+  # macOS must get a GPU adapter: WEBGPU_REQUIRE_GPU fails the run on a
+  # fallback (software) adapter. Linux runs the same tests on SwiftShader
+  # and says so in the adapter line of the log; it proves the bindings, not
+  # a GPU.
+  browser:
+    name: browser (${{ matrix.lane }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { lane: 'macOS, GPU required', os: macos-latest, require: '1', fallback: '0', args: '' }
+          # Without these flags headless Linux Chromium tears the WebGPU
+          # instance down at the first canvas configure and presents
+          # transparent frames (root-caused in go-wasmcontainers/gpu v0.5.1).
+          - { lane: 'Linux, fallback (SwiftShader)', os: ubuntu-latest, require: '0', fallback: '1', args: '--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader' }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.3' }
+      - uses: actions/setup-node@v7
+        with: { node-version: 22 }
+      - run: go version && node --version
+      - name: Playwright driver and Chromium
+        shell: bash
+        run: |
+          echo "PLAYWRIGHT_DRIVER_PATH=$RUNNER_TEMP/pwdriver" >> "$GITHUB_ENV"
+          echo "PLAYWRIGHT_NODEJS_PATH=$(command -v node)" >> "$GITHUB_ENV"
+          go run github.com/go-wasmcontainers/playground/cmd/site@v0.2.0 playwright-driver --dir "$RUNNER_TEMP/pwdriver"
+          PLAYWRIGHT_DRIVER_PATH="$RUNNER_TEMP/pwdriver" PLAYWRIGHT_NODEJS_PATH="$(command -v node)" \
+            go -C internal/cmd/wasmbrowser run github.com/playwright-community/playwright-go/cmd/playwright install --with-deps chromium
+      - name: build the runner
+        run: go -C internal/cmd/wasmbrowser build -o "$RUNNER_TEMP/wasmbrowser" .
+      - name: GOOS=js go test in a browser worker
+        shell: bash
+        env:
+          WEBGPU_REQUIRE_GPU: ${{ matrix.require }}
+          WEBGPU_ALLOW_FALLBACK: ${{ matrix.fallback }}
+          WEBGPU_BROWSER_ARGS: ${{ matrix.args }}
+        run: |
+          # bash -e would exit at a failing go test before the log is shown.
+          status=0
+          GOOS=js GOARCH=wasm go test -count=1 -v -exec="$RUNNER_TEMP/wasmbrowser" ./... > "$RUNNER_TEMP/browser.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/browser.log"
+          exit $status
+
+  vulns:
+    name: govulncheck, judged by vulngate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.3' }
+      - run: go version
+      # govulncheck's exit status does not say whether a finding is
+      # reachable; vulngate judges the JSON, and an empty scan is refused.
+      - name: govulncheck, judged by vulngate
+        run: |
+          set -eu
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/go-fleettools/fleettools/cmd/vulngate@v0.46.0
+          BIN="$(go env GOPATH)/bin"
+          for dir in . internal/cmd/wasmbrowser; do
+            (cd "$dir" && "$BIN/govulncheck" -format json ./... > /tmp/vuln.json || true)
+            test -s /tmp/vuln.json || { echo "::error::govulncheck wrote nothing for $dir"; exit 1; }
+            "$BIN/vulngate" -go "$(go env GOVERSION)" /tmp/vuln.json
+          done
