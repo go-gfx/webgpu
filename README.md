@@ -4,9 +4,9 @@ WebGPU for Go in the browser (`GOOS=js GOARCH=wasm`): a typed API named after
 the [WebGPU specification](https://www.w3.org/TR/webgpu/), usable from any Go
 program that runs in a window or a worker.
 
-**Status: in development, not released.** The direct API is in place
-(this README describes it); batched command encoding (one JavaScript call per
-submit), OffscreenCanvas surfaces and the first release are next.
+**Status: in development, not released.** The direct API and batched command
+encoding (one JavaScript call per submit) are in place; OffscreenCanvas
+surfaces and the first release are next.
 
 ```go
 import "github.com/go-gfx/webgpu"
@@ -24,6 +24,41 @@ import "github.com/go-gfx/webgpu"
 - Render passes (indexed and instanced draws, indirect draws, viewport,
   scissor), render bundles, compute passes.
 - Error scopes and uncaptured errors as Go errors.
+
+## Batched encoding: one JavaScript call per submit
+
+A `syscall/js` call costs about ten times the WebGPU call it carries. A
+`Recorder` records a whole submit in Go (queue writes, render and compute
+passes, dynamic offsets included) as `uint32` words; `Submit` copies them to
+JavaScript once and `replay.js` issues the WebGPU calls:
+
+```go
+webgpu.InstallReplay(ctx, "/webgpu-replay.js") // once; "" loads the embedded copy from a blob: URL
+rec := device.NewRecorder()                    // reuse it frame after frame
+rec.WriteBuffer(uniforms, 0, frameData)
+p := rec.BeginRenderPass(passDesc)
+p.SetPipeline(pipe)
+for _, s := range surfaces {
+	p.SetBindGroup(0, s.group)
+	p.DrawIndexed(s.count, 1, s.first, 0, 0)
+}
+p.End()
+seq, err := rec.Submit()                       // one call; the first refused command, if any
+err = device.WaitSubmitted(ctx, seq)           // only when the CPU must wait for the GPU
+```
+
+The recorder checks every command as the direct API does. `replay.js`
+(`webgpu.ReplayJS`, served as `webgpu.ReplayJSName`) is a plain same-origin
+script, so a page with `script-src 'self'` serves it like `wasm_exec.js`; it
+evaluates nothing and refuses a malformed stream. Its Go mirror (`decode.go`)
+reads the same format with the same checks; it is fuzzed, and a browser test
+holds the two readers to the same verdict on thousands of mutated streams.
+
+Submissions are numbered on a timeline (package `timeline`, shared by
+`Queue.Submit` and `Recorder.Submit`): completing number n completes every
+earlier one, the fence model of virtio-gpu, so many waiters cost one
+`onSubmittedWorkDone` round trip. The package has no dependency and no notion
+of a GPU.
 
 ## Errors at the call, not later on the device
 
@@ -75,16 +110,34 @@ on Linux on SwiftShader.
 
 ## Performance
 
-Measured on an Apple M4 Max, Chromium 143, Metal adapter, in a worker (machine
-load 9 to 17: indicative). One `syscall/js` call costs about 200 ns for
-`setPipeline`, `setBindGroup` or `draw`, against 17 ns for the same `draw`
-issued from JavaScript: the cost is the call itself (each `Value.Call` decodes
-its method name). A frame of 1000 draws costs about 0.5 ms of CPU through
-direct calls. Batched encoding (next) records commands in Go and replays them
-in one call: about 40 µs for the same frame in the prototype.
+Measured on an Apple M4 Max, Chromium 143, Metal adapter, in a worker. The
+machine's load was 10 to 16 during these runs, so the numbers are indicative.
+One `syscall/js` call costs about 200 ns for `setPipeline`, `setBindGroup` or
+`draw`, against 17 ns for the same `draw` issued from JavaScript: the cost is
+the call itself (each `Value.Call` decodes its method name).
+
+CPU time per frame of n draws (`setBindGroup` + `draw` each), median of three
+runs of `BenchmarkFrame`:
+
+| draws | direct calls | `Recorder` | the same frame in JavaScript |
+|---:|---:|---:|---:|
+| 100 | 80 µs | 22 µs | 13 µs |
+| 1000 | 491 µs | 85 µs | 32 µs |
+| 5000 | 2320 µs | 380 µs | 138 µs |
+
+Batching is 5.8 to 6.1 times faster than direct calls from 1000 draws up. It
+is still 2.7 times the JavaScript floor: recording costs about 40 ns per draw
+in wasm (10 ns natively, `BenchmarkRecordDraws`), and the rest is the replay
+itself.
 
 `WriteBuffer` copies through a staging array the device reuses; allocating a
-fresh `Uint8Array` per call, as is common, was 3 to 4 times slower.
+fresh `Uint8Array` per call, as is common, was 3 to 4 times slower. Whether
+the source is a 64 KiB array, a view into a 64 MiB one or into the Go
+instance's own memory makes no difference: about 5 µs per 64 KiB write, all
+spent in the browser's copy (`BenchmarkWriteBuffer64KiBSource`). An earlier
+prototype that found the Go-memory view slower had measured a queue that was
+backing up. A zero-copy path would save one copy per write but would depend
+on `wasm_exec.js` internals, so writes go through the staging copy.
 
 ## Licence
 

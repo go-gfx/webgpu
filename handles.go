@@ -1,12 +1,20 @@
 package webgpu
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+
+	"github.com/go-gfx/webgpu/timeline"
+)
 
 // object is what every handle holds: the browser object (a js.Value under
 // GOOS=js) and its label.
 type object struct {
 	v     jsValue
 	label string
+	id    uint32        // replay table slot, 0 until first recorded; guarded by registry.mu
+	put   bool          // the slot holds the object; guarded by registry.mu
+	ready atomic.Uint32 // id once put: the lock-free path of batchID
 }
 
 // Label returns the label the object was created with.
@@ -53,7 +61,18 @@ type Device struct {
 	memory   int64 // bytes this device charged
 	pipes    int   // pipelines this device charged
 	stage    staging
+	asked    uint64 // highest submission an onSubmittedWorkDone is waiting for
+
+	// tl numbers queue submissions and records their completion.
+	tl timeline.Timeline
 }
+
+// Submitted is the number of the device's last queue submission (Queue
+// Submit and Recorder.Submit), from 1.
+func (d *Device) Submitted() uint64 { return d.tl.Submitted() }
+
+// Completed is the highest submission known to be complete.
+func (d *Device) Completed() uint64 { return d.tl.Completed() }
 
 func newDevice(v jsValue, label string, q *Quota) *Device {
 	return &Device{object: object{v: v, label: label}, quota: q, lostCh: make(chan struct{})}
@@ -76,6 +95,7 @@ func (d *Device) setLost(info DeviceLostInfo) {
 	d.lost, d.lostInfo = true, info
 	d.mu.Unlock()
 	d.releaseAll()
+	d.tl.Fail(ErrDestroyed)
 	close(d.lostCh)
 }
 

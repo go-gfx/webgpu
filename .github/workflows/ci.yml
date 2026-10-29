@@ -55,16 +55,17 @@ jobs:
       - shell: bash
         run: go run github.com/go-fleettools/fleettools/cmd/covblocks@v0.46.0 cover.out
 
-  # Copy and size checks take untrusted arguments: fuzzed on every change
-  # (the copy check against an unbounded-integer oracle). A target that
-  # does not exist fails the lane.
+  # Copy and size checks take untrusted arguments, and the command-stream
+  # reader must survive any words: fuzzed on every change (the copy check
+  # against an unbounded-integer oracle). A target that does not exist
+  # fails the lane.
   fuzz:
     name: fuzz smoke ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [FuzzCheckTextureCopy, FuzzTextureBytes]
+        target: [FuzzCheckTextureCopy, FuzzTextureBytes, FuzzDecode]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -132,6 +133,17 @@ jobs:
           status=0
           GOOS=js GOARCH=wasm go test -count=1 -v -exec="$RUNNER_TEMP/wasmbrowser" ./... > "$RUNNER_TEMP/browser.log" 2>&1 || status=$?
           cat "$RUNNER_TEMP/browser.log"
+          exit $status
+      # The benchmarks run once so they keep working; CI runners are shared
+      # and their timings are not reported as results.
+      - name: benchmarks run (once each)
+        shell: bash
+        env:
+          WEBGPU_BROWSER_ARGS: ${{ matrix.args }}
+        run: |
+          status=0
+          GOOS=js GOARCH=wasm go test -count=1 -run '^$' -bench . -benchtime 1x -exec="$RUNNER_TEMP/wasmbrowser" . > "$RUNNER_TEMP/bench.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/bench.log"
           exit $status
 
   vulns:

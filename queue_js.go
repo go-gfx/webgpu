@@ -64,16 +64,53 @@ func (q *Queue) Submit(cbs ...*CommandBuffer) error {
 		}
 		a[i] = c.v
 	}
-	return try("submit", func() { q.v.Call("submit", a) })
+	if err := try("submit", func() { q.v.Call("submit", a) }); err != nil {
+		return err
+	}
+	q.dev.tl.Next()
+	return nil
 }
 
 // OnSubmittedWorkDone waits until the GPU finished the work submitted so
 // far (queue.onSubmittedWorkDone()).
 func (q *Queue) OnSubmittedWorkDone(ctx context.Context) error {
+	target := q.dev.tl.Submitted()
 	var p js.Value
 	if err := try("onSubmittedWorkDone", func() { p = q.v.Call("onSubmittedWorkDone") }); err != nil {
 		return err
 	}
-	_, err := await(ctx, "onSubmittedWorkDone", p)
-	return err
+	if _, err := await(ctx, "onSubmittedWorkDone", p); err != nil {
+		return err
+	}
+	q.dev.tl.Signal(target)
+	return nil
+}
+
+// WaitSubmitted waits until submission seq (a number Recorder.Submit
+// returned, or Device.Submitted) is complete on the GPU. Completions are
+// in order: waiting for one waits for every earlier one, and one
+// onSubmittedWorkDone promise answers every waiter it covers, so many
+// waiters cost one round trip to the GPU process.
+func (d *Device) WaitSubmitted(ctx context.Context, seq uint64) error {
+	if seq > d.tl.Submitted() {
+		return bounds("WaitSubmitted", "submission %d was never made (last %d)", seq, d.tl.Submitted())
+	}
+	d.mu.Lock()
+	if seq > d.asked && !d.lost {
+		target := d.tl.Submitted()
+		d.asked = target
+		d.mu.Unlock()
+		var p js.Value
+		if err := try("onSubmittedWorkDone", func() { p = d.queue.v.Call("onSubmittedWorkDone") }); err != nil {
+			return err
+		}
+		go func() {
+			if _, err := await(context.Background(), "onSubmittedWorkDone", p); err == nil {
+				d.tl.Signal(target)
+			}
+		}()
+	} else {
+		d.mu.Unlock()
+	}
+	return d.tl.Wait(ctx, seq)
 }
