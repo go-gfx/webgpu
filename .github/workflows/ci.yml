@@ -99,10 +99,11 @@ jobs:
           - { lane: 'macOS, GPU required', os: macos-latest, require: '1', fallback: '0', args: '' }
           # Without these flags headless Linux Chromium tears the WebGPU
           # instance down at the first canvas configure and presents
-          # transparent frames (root-caused in go-wasmcontainers/gpu v0.5.1).
+          # transparent frames (root-caused in go-wasmcontainers/gpu v0.5.1);
+          # and Linux Chromium offers no adapter without --enable-unsafe-webgpu.
           # ubuntu-24.04, not -latest: Playwright does not support
           # Chromium on Ubuntu 26.04 (measured on this lane, 2026-10-29).
-          - { lane: 'Linux, fallback (SwiftShader)', os: ubuntu-24.04, require: '0', fallback: '1', args: '--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader' }
+          - { lane: 'Linux, fallback (SwiftShader)', os: ubuntu-24.04, require: '0', fallback: '1', args: '--enable-unsafe-webgpu --enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader' }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
