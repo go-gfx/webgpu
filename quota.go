@@ -25,6 +25,9 @@ type Quota struct {
 	// Limits caps the limits a device may require; a required limit not
 	// named here is refused.
 	Limits map[string]uint64
+	// SurfaceWidth and SurfaceHeight bound a Surface's size. 0 is no
+	// limit.
+	SurfaceWidth, SurfaceHeight int
 
 	mu        sync.Mutex
 	memory    int64
