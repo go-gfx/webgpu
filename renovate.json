@@ -1,0 +1,22 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>go-gfx/.github"],
+  "packageRules": [
+    {
+      "description": [
+        "Hold Node below 23 in the browser lanes: under Node 26 the Playwright driver install hangs (found in the go-wasmcontainers Renovate triage, 2026-10-29). Lift this once a Node 26 run has installed the driver and passed both browser lanes."
+      ],
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["node"],
+      "allowedVersions": "<23"
+    },
+    {
+      "description": [
+        "github.com/playwright-community/playwright-go moved to github.com/mxschmitt/playwright-go, and that module's v0.6201.1 needs Playwright driver 1.62.1 (install it with --version 1.62.1). This repository stays on the old path, at v0.5700.1, whose driver is 1.57.0 as the CI installs it. A version bump here alone would mismatch the driver; the move to the new path is a deliberate change, not a Renovate update."
+      ],
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["github.com/playwright-community/playwright-go"],
+      "enabled": false
+    }
+  ]
+}
