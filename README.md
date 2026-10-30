@@ -4,9 +4,14 @@ WebGPU for Go in the browser (`GOOS=js GOARCH=wasm`): a typed API named after
 the [WebGPU specification](https://www.w3.org/TR/webgpu/), usable from any Go
 program that runs in a window or a worker.
 
-**Status: in development, not released.** The direct API, batched command
-encoding (one JavaScript call per submit) and OffscreenCanvas surfaces are in
-place; the first release is next.
+**Status: released, v0.1.0** (pre-1.0: a minor version may change the API).
+It covers the direct API, batched command encoding (one JavaScript call per
+submit) and OffscreenCanvas surfaces. The go-wasmcontainers GPU host runs on
+it.
+
+```sh
+go get github.com/go-gfx/webgpu@v0.1.0
+```
 
 ```go
 import "github.com/go-gfx/webgpu"
