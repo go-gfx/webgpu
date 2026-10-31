@@ -113,7 +113,7 @@ func (r *Recorder) Submit() (seq uint64, err error) {
 
 // Replay submits a stream recorded elsewhere — another process, a
 // virtual machine's guest over virtio-gpu — whose object ids are the
-// replay ids of refs (each a *Buffer, *TextureView, *BindGroup,
+// replay ids of refs (each a *Buffer, *Texture, *TextureView, *BindGroup,
 // *RenderPipeline, *ComputePipeline or *RenderBundle of this device;
 // wire.Remap translates a foreign stream's ids to them). The stream is
 // checked with wire.Decode first and may name no other object, so it

@@ -44,6 +44,7 @@ func fakeGPU(calls *[]string) (device, queue js.Value) {
 	method(enc, "beginRenderPass", func() any { return pass })
 	method(enc, "beginComputePass", func() any { return pass })
 	method(enc, "copyBufferToBuffer", nil)
+	method(enc, "copyTextureToTexture", nil)
 	method(enc, "finish", func() any { return obj() })
 	device = obj()
 	method(device, "createCommandEncoder", func() any { return enc })
@@ -81,6 +82,9 @@ func expectedCalls(cmds []cmd) []string {
 		case opCopyBufferToBuffer:
 			open()
 			out = append(out, "copyBufferToBuffer")
+		case opCopyTextureToTexture:
+			open()
+			out = append(out, "copyTextureToTexture")
 		case opSubmit:
 			if enc {
 				out = append(out, "finish", "submit")

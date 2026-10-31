@@ -13,13 +13,14 @@
   if (globalThis.goWebGPUReplay) return;
   const argc = {
     1: 1, 2: -1, 3: 4, 4: 5, 5: 6, 6: 6, 7: 6, 8: 4, 9: 4, 10: 1, 11: -1, 12: 3, 13: 3,
-    20: -1, 21: 0, 22: 0, 23: 3, 24: 3, 30: 5, 31: 8, 40: 0,
+    20: -1, 21: 0, 22: 0, 23: 3, 24: 3, 30: 5, 31: 8, 32: 15, 40: 0,
   };
   // 0 outside a pass, 1 render, 2 compute, -1 either pass.
   const place = {
     1: -1, 2: -1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1, 11: 1, 12: 1, 13: 1,
-    20: 0, 21: -1, 22: 0, 23: 2, 24: 2, 30: 0, 31: 0, 40: 0,
+    20: 0, 21: -1, 22: 0, 23: 2, 24: 2, 30: 0, 31: 0, 32: 0, 40: 0,
   };
+  const aspects = [undefined, "all", "stencil-only", "depth-only"];
   const loadOps = [undefined, "load", "clear"];
   const storeOps = [undefined, "store", "discard"];
   const indexFormats = [undefined, "uint16", "uint32"];
@@ -157,6 +158,18 @@
           case 31: {
             if (enc === null) enc = device.createCommandEncoder();
             enc.copyBufferToBuffer(this.obj(w[a], false), big(w[a + 1], w[a + 2]), this.obj(w[a + 3], false), big(w[a + 4], w[a + 5]), big(w[a + 6], w[a + 7]));
+            break;
+          }
+          case 32: {
+            if (w[a + 5] > 3 || w[a + 11] > 3) throw new Error("replay: bad texture aspect");
+            const src = this.obj(w[a], false), dst = this.obj(w[a + 6], false);
+            const info = (t, b) => {
+              const d = { texture: t, mipLevel: w[b + 1], origin: { x: w[b + 2], y: w[b + 3], z: w[b + 4] } };
+              if (w[b + 5]) d.aspect = aspects[w[b + 5]];
+              return d;
+            };
+            if (enc === null) enc = device.createCommandEncoder();
+            enc.copyTextureToTexture(info(src, a), info(dst, a + 6), { width: w[a + 12], height: w[a + 13], depthOrArrayLayers: w[a + 14] });
             break;
           }
           case 40: {

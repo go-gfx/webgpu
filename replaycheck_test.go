@@ -20,12 +20,15 @@ func TestCheckReplay(t *testing.T) {
 	if _, err := checkReplay(words, make([]byte, 4), []any{src}); err == nil || !strings.Contains(err.Error(), "unknown object") {
 		t.Errorf("ungranted object: %v", err)
 	}
-	for _, h := range []any{&Texture{}, &Sampler{}, &Device{}, 7} {
+	if _, err := checkReplay(nil, nil, []any{&Texture{}}); err != nil {
+		t.Errorf("a texture (copyTextureToTexture) refused: %v", err)
+	}
+	for _, h := range []any{&Sampler{}, &Device{}, 7} {
 		if _, err := checkReplay(nil, nil, []any{h}); err == nil {
 			t.Errorf("%T accepted as a stream object", h)
 		}
 	}
-	for _, h := range append(refs, &Texture{}, &Sampler{}, &ShaderModule{}, &BindGroupLayout{}, &PipelineLayout{}) {
+	for _, h := range append(refs, &Sampler{}, &ShaderModule{}, &BindGroupLayout{}, &PipelineLayout{}) {
 		id, err := ReplayID(h)
 		if err != nil || id == 0 {
 			t.Errorf("ReplayID(%T) = %d, %v", h, id, err)
