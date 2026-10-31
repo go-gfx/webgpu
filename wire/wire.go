@@ -19,7 +19,9 @@ import "fmt"
 // StreamVersion is the version of this format. It changes whenever an
 // opcode's layout changes, so that a remote host and its guests can
 // check they speak the same stream.
-const StreamVersion = 1
+//
+// 2 added CopyTextureToTexture.
+const StreamVersion = 2
 
 // Op is a command's opcode, the first word of a command.
 type Op uint32
@@ -47,7 +49,11 @@ const (
 	DispatchIndirect    Op = 24 // id offset(2)
 	WriteBuffer         Op = 30 // id offset(2) dataOffset length
 	CopyBufferToBuffer  Op = 31 // src srcOffset(2) dst dstOffset(2) size(2)
-	Submit              Op = 40
+	// srcTexture mip x y z aspect, dstTexture mip x y z aspect, width
+	// height depthOrArrayLayers. Aspect: 0 default, 1 all, 2 stencil-only,
+	// 3 depth-only.
+	CopyTextureToTexture Op = 32
+	Submit               Op = 40
 )
 
 // Limits the readers enforce on counts inside one command.
@@ -69,7 +75,7 @@ var argc = map[Op]int{
 	SetIndexBuffer: 6, SetViewport: 6, SetScissorRect: 4, SetBlendConstant: 4,
 	SetStencilReference: 1, ExecuteBundles: -1, DrawIndirect: 3, DrawIndexedIndirect: 3,
 	BeginRenderPass: -1, EndPass: 0, BeginComputePass: 0, Dispatch: 3, DispatchIndirect: 3,
-	WriteBuffer: 5, CopyBufferToBuffer: 8, Submit: 0,
+	WriteBuffer: 5, CopyBufferToBuffer: 8, CopyTextureToTexture: 15, Submit: 0,
 }
 
 // where each opcode may appear: 0 outside a pass, 1 render pass, 2
@@ -79,7 +85,7 @@ var opPlace = map[Op]int{
 	SetIndexBuffer: 1, SetViewport: 1, SetScissorRect: 1, SetBlendConstant: 1,
 	SetStencilReference: 1, ExecuteBundles: 1, DrawIndirect: 1, DrawIndexedIndirect: 1,
 	BeginRenderPass: 0, EndPass: -1, BeginComputePass: 0, Dispatch: 2, DispatchIndirect: 2,
-	WriteBuffer: 0, CopyBufferToBuffer: 0, Submit: 0,
+	WriteBuffer: 0, CopyBufferToBuffer: 0, CopyTextureToTexture: 0, Submit: 0,
 }
 
 // Decode reads a stream with replay.js's checks and returns its commands.
@@ -225,6 +231,13 @@ func walk(w []uint32, ndata uint32, obj func(pos int, nullable bool) error, emit
 		case CopyBufferToBuffer:
 			if err = obj(at, false); err == nil {
 				err = obj(at+3, false)
+			}
+		case CopyTextureToTexture:
+			if err = obj(at, false); err == nil {
+				err = obj(at+6, false)
+			}
+			if err == nil && (a[5] > 3 || a[11] > 3) {
+				err = fmt.Errorf("replay: bad texture aspect")
 			}
 		}
 		if err != nil {

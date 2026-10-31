@@ -195,6 +195,46 @@ func TestReplayForeignStream(t *testing.T) {
 	}
 }
 
+// TestRecordedTextureCopy: copyTextureToTexture in a batch, on a real
+// device: the destination holds the source's texels at the offset.
+func TestRecordedTextureCopy(t *testing.T) {
+	installReplay(t)
+	d := newDev(t, nil)
+	desc := TextureDescriptor{Size: Extent3D{64, 4, 1}, Format: TextureFormatRGBA8Unorm, Usage: TextureUsageCopyDst | TextureUsageCopySrc}
+	src := must(d.CreateTexture(desc))(t)
+	dst := must(d.CreateTexture(desc))(t)
+	px := make([]byte, 64*4*4)
+	for i := range px {
+		px[i] = byte(i)
+	}
+	if err := d.Queue().WriteTexture(TexelCopyTextureInfo{Texture: src}, px, TexelCopyBufferLayout{BytesPerRow: 256}, Extent3D{64, 4, 1}); err != nil {
+		t.Fatal(err)
+	}
+	r := d.NewRecorder()
+	r.CopyTextureToTexture(TexelCopyTextureInfo{Texture: src, Origin: Origin3D{0, 1, 0}}, TexelCopyTextureInfo{Texture: dst}, Extent3D{64, 2, 1})
+	if _, err := r.Submit(); err != nil {
+		t.Fatal(err)
+	}
+	out := must(d.CreateBuffer(BufferDescriptor{Size: 256 * 2, Usage: BufferUsageMapRead | BufferUsageCopyDst}))(t)
+	enc := must(d.CreateCommandEncoder("read"))(t)
+	if err := enc.CopyTextureToBuffer(TexelCopyTextureInfo{Texture: dst}, TexelCopyBufferInfo{Buffer: out, Layout: TexelCopyBufferLayout{BytesPerRow: 256}}, Extent3D{64, 2, 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Queue().Submit(must(enc.Finish())(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.MapAsync(ctx(t), MapModeRead, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, 512)
+	if err := out.ReadMapped(0, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(px[256:768]) {
+		t.Fatal("the copied rows differ from the source's rows 1..2")
+	}
+}
+
 func TestMappedAtCreation(t *testing.T) {
 	d := newDev(t, nil)
 	b := must(d.CreateBuffer(BufferDescriptor{Size: 16, Usage: BufferUsageMapWrite | BufferUsageCopySrc, MappedAtCreation: true}))(t)

@@ -190,6 +190,34 @@ func (r *Recorder) CopyBufferToBuffer(src *Buffer, srcOffset uint64, dst *Buffer
 	r.words = append(r.words, uint32(opCopyBufferToBuffer), r.id(&src.object), so, sh, r.id(&dst.object), do, dh, zl, zh)
 }
 
+// aspectCode is a TextureAspect in the stream; 0 is "not given".
+var aspectCode = map[TextureAspect]uint32{"": 0, TextureAspectAll: 1, TextureAspectStencilOnly: 2, TextureAspectDepthOnly: 3}
+
+// CopyTextureToTexture records encoder.copyTextureToTexture. As on the
+// direct path, the browser validates the regions; the textures must not
+// be nil and the aspects must be WebGPU's.
+func (r *Recorder) CopyTextureToTexture(src, dst TexelCopyTextureInfo, size Extent3D) {
+	const op = "copyTextureToTexture"
+	if !r.in(0, op+" inside a pass") {
+		return
+	}
+	if src.Texture == nil || dst.Texture == nil {
+		r.fail(bounds(op, "nil texture"))
+		return
+	}
+	sa, ok1 := aspectCode[src.Aspect]
+	da, ok2 := aspectCode[dst.Aspect]
+	if !ok1 || !ok2 {
+		r.fail(bounds(op, "aspect %q or %q", src.Aspect, dst.Aspect))
+		return
+	}
+	size = size.norm()
+	r.words = append(r.words, uint32(opCopyTextureToTexture),
+		r.id(&src.Texture.object), src.MipLevel, src.Origin.X, src.Origin.Y, src.Origin.Z, sa,
+		r.id(&dst.Texture.object), dst.MipLevel, dst.Origin.X, dst.Origin.Y, dst.Origin.Z, da,
+		size.Width, size.Height, size.DepthOrArrayLayers)
+}
+
 // maxData bounds the data stream: its offsets and lengths are uint32
 // words. A variable so a test can lower it.
 var maxData uint64 = math.MaxUint32

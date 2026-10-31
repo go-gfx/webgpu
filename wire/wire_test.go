@@ -14,6 +14,7 @@ func stream() []uint32 {
 	return []uint32{
 		uint32(WriteBuffer), 1, 0, 0, 0, 4,
 		uint32(CopyBufferToBuffer), 1, 0, 0, 2, 0, 0, 4, 0,
+		uint32(CopyTextureToTexture), 2, 0, 1, 2, 0, 1, 3, 0, 0, 0, 0, 3, 4, 4, 1,
 		uint32(BeginRenderPass), 2,
 		3, 2, 2, 1, 0, 0, 0, 0, // color 0: view 3, resolve 2
 		0, 0, 0, 0, 0, 0, 0, 0, // color 1 unused
@@ -49,7 +50,7 @@ func TestDecode(t *testing.T) {
 		ops = append(ops, c.Op)
 		n += 1 + len(c.Args)
 	}
-	want := []Op{WriteBuffer, CopyBufferToBuffer, BeginRenderPass, SetPipeline, SetBindGroup, SetBindGroup,
+	want := []Op{WriteBuffer, CopyBufferToBuffer, CopyTextureToTexture, BeginRenderPass, SetPipeline, SetBindGroup, SetBindGroup,
 		SetVertexBuffer, SetIndexBuffer, Draw, DrawIndirect, ExecuteBundles, EndPass, BeginComputePass,
 		SetPipeline, DispatchIndirect, EndPass, Submit}
 	if !reflect.DeepEqual(ops, want) || n != len(w) {
@@ -104,6 +105,12 @@ func TestDecodeRejects(t *testing.T) {
 		{"copy unknown src", []uint32{31, 9, 0, 0, 1, 0, 0, 4, 0}, 0, "unknown object 9"},
 		{"copy unknown dst", []uint32{31, 1, 0, 0, 9, 0, 0, 4, 0}, 0, "unknown object 9"},
 		{"pass left open", []uint32{22}, 0, "left open"},
+		{"texture copy unknown src", []uint32{32, 9, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1}, 0, "unknown object 9"},
+		{"texture copy unknown dst", []uint32{32, 1, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 1, 1, 1}, 0, "unknown object 9"},
+		{"texture copy src aspect", []uint32{32, 1, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 1, 1, 1}, 0, "aspect"},
+		{"texture copy dst aspect", []uint32{32, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 4, 1, 1, 1}, 0, "aspect"},
+		{"texture copy truncated", []uint32{32, 1, 0, 0}, 0, "truncated"},
+		{"texture copy in pass", append(append([]uint32{}, rp...), 32, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1), 0, "out of place"},
 	} {
 		_, err := Decode(c.w, c.ndata, known)
 		if err == nil || !strings.Contains(err.Error(), c.err) {
@@ -145,10 +152,10 @@ func TestRemap(t *testing.T) {
 			changed++
 		}
 	}
-	// ids: write 1, copy 2, colour 2, depth 1, pipeline 1, group 1 (the
-	// unbind's 0 stays), vertex 1, index 1, indirect 1, bundles 2,
-	// pipeline 1, dispatch 1 = 15.
-	if changed != 15 || len(a) != len(b) {
+	// ids: write 1, copy 2, texture copy 2, colour 2, depth 1, pipeline 1,
+	// group 1 (the unbind's 0 stays), vertex 1, index 1, indirect 1,
+	// bundles 2, pipeline 1, dispatch 1 = 17.
+	if changed != 17 || len(a) != len(b) {
 		t.Fatalf("%d ids changed, %d/%d commands", changed, len(a), len(b))
 	}
 	if seen[0] != 0 {

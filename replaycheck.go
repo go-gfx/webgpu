@@ -11,6 +11,8 @@ func replayable(h any) (*object, error) {
 	switch o := h.(type) {
 	case *Buffer:
 		return &o.object, nil
+	case *Texture:
+		return &o.object, nil
 	case *TextureView:
 		return &o.object, nil
 	case *BindGroup:
@@ -32,8 +34,6 @@ func replayable(h any) (*object, error) {
 func ReplayID(h any) (uint32, error) {
 	var o *object
 	switch v := h.(type) {
-	case *Texture:
-		o = &v.object
 	case *Sampler:
 		o = &v.object
 	case *ShaderModule:

@@ -13,27 +13,28 @@ type (
 )
 
 const (
-	opSetPipeline         = wire.SetPipeline
-	opSetBindGroup        = wire.SetBindGroup
-	opDraw                = wire.Draw
-	opDrawIndexed         = wire.DrawIndexed
-	opSetVertexBuffer     = wire.SetVertexBuffer
-	opSetIndexBuffer      = wire.SetIndexBuffer
-	opSetViewport         = wire.SetViewport
-	opSetScissorRect      = wire.SetScissorRect
-	opSetBlendConstant    = wire.SetBlendConstant
-	opSetStencilReference = wire.SetStencilReference
-	opExecuteBundles      = wire.ExecuteBundles
-	opDrawIndirect        = wire.DrawIndirect
-	opDrawIndexedIndirect = wire.DrawIndexedIndirect
-	opBeginRenderPass     = wire.BeginRenderPass
-	opEndPass             = wire.EndPass
-	opBeginComputePass    = wire.BeginComputePass
-	opDispatch            = wire.Dispatch
-	opDispatchIndirect    = wire.DispatchIndirect
-	opWriteBuffer         = wire.WriteBuffer
-	opCopyBufferToBuffer  = wire.CopyBufferToBuffer
-	opSubmit              = wire.Submit
+	opSetPipeline          = wire.SetPipeline
+	opSetBindGroup         = wire.SetBindGroup
+	opDraw                 = wire.Draw
+	opDrawIndexed          = wire.DrawIndexed
+	opSetVertexBuffer      = wire.SetVertexBuffer
+	opSetIndexBuffer       = wire.SetIndexBuffer
+	opSetViewport          = wire.SetViewport
+	opSetScissorRect       = wire.SetScissorRect
+	opSetBlendConstant     = wire.SetBlendConstant
+	opSetStencilReference  = wire.SetStencilReference
+	opExecuteBundles       = wire.ExecuteBundles
+	opDrawIndirect         = wire.DrawIndirect
+	opDrawIndexedIndirect  = wire.DrawIndexedIndirect
+	opBeginRenderPass      = wire.BeginRenderPass
+	opEndPass              = wire.EndPass
+	opBeginComputePass     = wire.BeginComputePass
+	opDispatch             = wire.Dispatch
+	opDispatchIndirect     = wire.DispatchIndirect
+	opWriteBuffer          = wire.WriteBuffer
+	opCopyBufferToBuffer   = wire.CopyBufferToBuffer
+	opCopyTextureToTexture = wire.CopyTextureToTexture
+	opSubmit               = wire.Submit
 )
 
 // decode is wire.Decode: tests compare it with the recorder and with

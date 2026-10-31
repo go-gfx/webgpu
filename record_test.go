@@ -26,6 +26,8 @@ func recordAll(t *testing.T) (*Recorder, []opcode) {
 
 	r.WriteBuffer(vb, 4, []byte{1, 2, 3, 4, 5, 6, 7, 8})
 	r.CopyBufferToBuffer(vb, 0, vb, 32, 16)
+	r.CopyTextureToTexture(TexelCopyTextureInfo{Texture: &Texture{}, MipLevel: 1, Origin: Origin3D{1, 2, 0}, Aspect: TextureAspectAll},
+		TexelCopyTextureInfo{Texture: &Texture{}, Aspect: TextureAspectDepthOnly}, Extent3D{Width: 4, Height: 3})
 	p := r.BeginRenderPass(RenderPassDescriptor{
 		ColorAttachments: []*RenderPassColorAttachment{
 			{View: v, ResolveTarget: rv, LoadOp: LoadOpClear, StoreOp: StoreOpStore, ClearValue: Color{0.5, 0, 0, 1}},
@@ -63,7 +65,7 @@ func recordAll(t *testing.T) (*Recorder, []opcode) {
 	if err := r.finish(); err != nil {
 		t.Fatal(err)
 	}
-	return r, []opcode{opWriteBuffer, opCopyBufferToBuffer, opBeginRenderPass, opSetPipeline, opSetBindGroup, opSetBindGroup, opSetBindGroup,
+	return r, []opcode{opWriteBuffer, opCopyBufferToBuffer, opCopyTextureToTexture, opBeginRenderPass, opSetPipeline, opSetBindGroup, opSetBindGroup, opSetBindGroup,
 		opSetVertexBuffer, opSetIndexBuffer, opSetViewport, opSetScissorRect, opSetBlendConstant, opSetStencilReference, opDraw, opDrawIndexed,
 		opDrawIndirect, opDrawIndexedIndirect, opExecuteBundles, opEndPass, opBeginComputePass, opSetPipeline, opSetBindGroup, opDispatch,
 		opDispatchIndirect, opEndPass, opSubmit}
@@ -92,22 +94,25 @@ func TestRecordDecodeRoundTrip(t *testing.T) {
 	if string(r.data) != "\x01\x02\x03\x04\x05\x06\x07\x08" {
 		t.Fatalf("data %v", r.data)
 	}
-	if a := cmds[5].Args; a[0] != 1 || a[2] != 2 || a[3] != 256 || a[4] != 512 {
+	if a := cmds[2].Args; a[1] != 1 || a[2] != 1 || a[3] != 2 || a[5] != 1 || a[11] != 3 || a[12] != 4 || a[13] != 3 || a[14] != 1 {
+		t.Fatalf("copyTextureToTexture %v", a)
+	}
+	if a := cmds[6].Args; a[0] != 1 || a[2] != 2 || a[3] != 256 || a[4] != 512 {
 		t.Fatalf("dynamic offsets %v", a)
 	}
-	if a := cmds[6].Args; a[1] != 0 {
+	if a := cmds[7].Args; a[1] != 0 {
 		t.Fatalf("unbind %v", a)
 	}
-	if a := cmds[7].Args; a[4] != 64 { // size 0 resolved to the end
+	if a := cmds[8].Args; a[4] != 64 { // size 0 resolved to the end
 		t.Fatalf("vertex buffer size %v", a)
 	}
-	if a := cmds[14].Args; int32(a[3]) != -4 {
+	if a := cmds[15].Args; int32(a[3]) != -4 {
 		t.Fatalf("baseVertex %v", a)
 	}
-	if a := cmds[9].Args; math.Float32frombits(a[2]) != 640 {
+	if a := cmds[10].Args; math.Float32frombits(a[2]) != 640 {
 		t.Fatalf("viewport %v", a)
 	}
-	if a := cmds[2].Args; a[0] != 2 || a[3] != 2 || a[4] != 1 || math.Float32frombits(a[5]) != 0.5 || a[9] != 0 || a[17] != 1 {
+	if a := cmds[3].Args; a[0] != 2 || a[3] != 2 || a[4] != 1 || math.Float32frombits(a[5]) != 0.5 || a[9] != 0 || a[17] != 1 {
 		t.Fatalf("render pass %v", a)
 	}
 	if r.Len() != len(r.words) {
@@ -145,6 +150,16 @@ func TestRecorderRefusals(t *testing.T) {
 		"nil bundle":       func(r *Recorder) { r.BeginRenderPass(RenderPassDescriptor{}).ExecuteBundles(nil) },
 		"compute nil":      func(r *Recorder) { r.BeginComputePass().SetPipeline(nil) },
 		"compute indirect": func(r *Recorder) { r.BeginComputePass().DispatchWorkgroupsIndirect(buf(8, BufferUsageIndirect), 0) },
+		"texture copy nil": func(r *Recorder) {
+			r.CopyTextureToTexture(TexelCopyTextureInfo{}, TexelCopyTextureInfo{Texture: &Texture{}}, Extent3D{})
+		},
+		"texture copy aspect": func(r *Recorder) {
+			r.CopyTextureToTexture(TexelCopyTextureInfo{Texture: &Texture{}, Aspect: "plane0-only"}, TexelCopyTextureInfo{Texture: &Texture{}}, Extent3D{})
+		},
+		"texture copy in pass": func(r *Recorder) {
+			r.BeginComputePass()
+			r.CopyTextureToTexture(TexelCopyTextureInfo{Texture: &Texture{}}, TexelCopyTextureInfo{Texture: &Texture{}}, Extent3D{})
+		},
 	} {
 		r := d.NewRecorder()
 		f(r)
@@ -152,7 +167,7 @@ func TestRecorderRefusals(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 			continue
 		}
-		if !errors.As(r.Err(), &be) && !strings.Contains(r.Err().Error(), "no view") {
+		if !errors.As(r.Err(), &be) && !errors.Is(r.Err(), ErrRecorderState) && !strings.Contains(r.Err().Error(), "no view") {
 			t.Errorf("%s: %v", name, r.Err())
 		}
 	}
