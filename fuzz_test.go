@@ -8,7 +8,10 @@ package webgpu
 import (
 	"encoding/binary"
 	"math/big"
+	"reflect"
 	"testing"
+
+	"github.com/go-gfx/webgpu/wire"
 )
 
 // FuzzDecode: the stream reader (decode, and replay.js which mirrors it)
@@ -38,6 +41,37 @@ func FuzzDecode(f *testing.F) {
 		}
 		if n != len(w) {
 			t.Fatalf("commands cover %d of %d words", n, len(w))
+		}
+	})
+}
+
+// FuzzDecodeDescriptor: descriptors come from another party (a virtio-gpu
+// guest). Whatever the bytes, decoding never panics, and an accepted
+// descriptor re-encodes and decodes to itself.
+func FuzzDecodeDescriptor(f *testing.F) {
+	o := newObjects()
+	for _, d := range descriptors(o) {
+		kind, b, err := EncodeDescriptor(d)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(uint32(kind), b)
+	}
+	f.Fuzz(func(t *testing.T, kind uint32, b []byte) {
+		d, err := DecodeDescriptor(wire.Kind(kind), b, o.tb.resolve)
+		if err != nil {
+			return
+		}
+		k2, b2, err := EncodeDescriptor(d)
+		if err != nil {
+			// A descriptor can decode yet not encode (a NaN cannot be
+			// in JSON, so it cannot arrive either): anything else is a
+			// disagreement between the two halves.
+			t.Fatalf("decoded %T does not encode: %v", d, err)
+		}
+		d2, err := DecodeDescriptor(k2, b2, o.tb.resolve)
+		if err != nil || !reflect.DeepEqual(d, d2) || k2 != wire.Kind(kind) {
+			t.Fatalf("unstable round trip: %v", err)
 		}
 	})
 }
