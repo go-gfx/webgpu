@@ -34,7 +34,7 @@ func FuzzDecode(f *testing.F) {
 		}
 		n := 0
 		for _, c := range cmds {
-			n += 1 + len(c.args)
+			n += 1 + len(c.Args)
 		}
 		if n != len(w) {
 			t.Fatalf("commands cover %d of %d words", n, len(w))
