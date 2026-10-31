@@ -65,6 +65,9 @@ type Device struct {
 
 	// tl numbers queue submissions and records their completion.
 	tl timeline.Timeline
+
+	// remote carries the work of a remote device (non-js builds).
+	remote RemoteSink
 }
 
 // Submitted is the number of the device's last queue submission (Queue
