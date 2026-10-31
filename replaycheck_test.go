@@ -25,6 +25,18 @@ func TestCheckReplay(t *testing.T) {
 			t.Errorf("%T accepted as a stream object", h)
 		}
 	}
+	for _, h := range append(refs, &Texture{}, &Sampler{}, &ShaderModule{}, &BindGroupLayout{}, &PipelineLayout{}) {
+		id, err := ReplayID(h)
+		if err != nil || id == 0 {
+			t.Errorf("ReplayID(%T) = %d, %v", h, id, err)
+		}
+	}
+	if id, _ := ReplayID(src); id != s {
+		t.Error("ReplayID differs from the id streams use")
+	}
+	if _, err := ReplayID(&Device{}); err == nil {
+		t.Error("ReplayID of a device")
+	}
 	old := maxData
 	maxData = 3
 	_, err = checkReplay(words, make([]byte, 4), refs)

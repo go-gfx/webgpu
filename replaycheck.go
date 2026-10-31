@@ -25,6 +25,32 @@ func replayable(h any) (*object, error) {
 	return nil, fmt.Errorf("webgpu: Replay: a %T cannot be named by a stream", h)
 }
 
+// ReplayID returns the id that streams and wire descriptors name h by
+// (allocated on first use): the id a transport translates a foreign
+// stream's or descriptor's ids to. h is any object handle of this
+// package.
+func ReplayID(h any) (uint32, error) {
+	var o *object
+	switch v := h.(type) {
+	case *Texture:
+		o = &v.object
+	case *Sampler:
+		o = &v.object
+	case *ShaderModule:
+		o = &v.object
+	case *BindGroupLayout:
+		o = &v.object
+	case *PipelineLayout:
+		o = &v.object
+	default:
+		var err error
+		if o, err = replayable(h); err != nil {
+			return 0, fmt.Errorf("webgpu: ReplayID: a %T is not an object handle", h)
+		}
+	}
+	return idOf(o), nil
+}
+
 // checkReplay checks a foreign stream (Device.Replay): the references
 // are objects a stream may name, the stream decodes with replay.js's
 // checks, and every object it names is one of the references.
