@@ -108,6 +108,31 @@ func (r *Recorder) Submit() (seq uint64, err error) {
 	if err := r.finish(); err != nil {
 		return 0, err
 	}
+	return r.replay()
+}
+
+// Replay submits a stream recorded elsewhere — another process, a
+// virtual machine's guest over virtio-gpu — whose object ids are the
+// replay ids of refs (each a *Buffer, *TextureView, *BindGroup,
+// *RenderPipeline, *ComputePipeline or *RenderBundle of this device;
+// wire.Remap translates a foreign stream's ids to them). The stream is
+// checked with wire.Decode first and may name no other object, so it
+// reaches only what the caller granted. It returns the submission's
+// number on the device's timeline, as Recorder.Submit does.
+func (d *Device) Replay(words []uint32, data []byte, refs ...any) (seq uint64, err error) {
+	objs, err := checkReplay(words, data, refs)
+	if err != nil {
+		return 0, err
+	}
+	r := &Recorder{dev: d, words: words, data: data}
+	for _, o := range objs {
+		r.id(o)
+	}
+	return r.replay()
+}
+
+// replay hands the recorded words to replay.js.
+func (r *Recorder) replay() (seq uint64, err error) {
 	if r.dev.isLost() {
 		return 0, ErrDestroyed
 	}
