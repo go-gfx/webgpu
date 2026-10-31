@@ -99,6 +99,15 @@ submits such a stream once its ids name this device's objects. It is
 checked with `wire.Decode` first, and it may name only the objects passed
 in `refs`.
 
+Outside the browser, `NewRemoteDevice(sink, label, quota)` returns a
+**remote device**. Its creation calls, `Queue.WriteBuffer` and
+`Recorder.Submit` send wire descriptors and streams to a `RemoteSink`, for
+example a VM guest's virtio-gpu webgpu-batch context, where a real device
+runs them. The checks and quotas are the browser path's, so a remote
+device refuses at the call what a browser device refuses. A sink error
+loses the device. Readback (`MapAsync`), `WriteTexture` and command
+encoders are not carried yet (`ErrRemoteUnsupported`).
+
 Objects are created remotely the same way. `EncodeDescriptor` turns a
 creation descriptor (buffer, texture, view, sampler, shader module, bind
 group layout, pipeline layout, bind group, render or compute pipeline)
