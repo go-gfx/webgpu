@@ -1,3 +1,8 @@
+// The browser runner has no file system for the seed corpus; the fuzz
+// targets run natively.
+
+//go:build !js
+
 package wire
 
 import (
