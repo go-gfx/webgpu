@@ -14,34 +14,8 @@ import (
 // One syscall/js call costs about ten times the WebGPU call it carries,
 // so a frame of many draws is mostly call overhead without this.
 //
-// The stream format is internal: replay.js and decode (its Go mirror, for
-// tests and fuzzing) are its only readers, this file its only writer.
-
-type opcode uint32
-
-const (
-	opSetPipeline         opcode = 1  // id
-	opSetBindGroup        opcode = 2  // index id n offsets[n] (id 0: unbind)
-	opDraw                opcode = 3  // vertexCount instanceCount firstVertex firstInstance
-	opDrawIndexed         opcode = 4  // indexCount instanceCount firstIndex baseVertex(int32) firstInstance
-	opSetVertexBuffer     opcode = 5  // slot id offset(2) size(2)
-	opSetIndexBuffer      opcode = 6  // id format offset(2) size(2)
-	opSetViewport         opcode = 7  // x y w h minDepth maxDepth (float32 bits)
-	opSetScissorRect      opcode = 8  // x y w h
-	opSetBlendConstant    opcode = 9  // r g b a (float32 bits)
-	opSetStencilReference opcode = 10 // ref
-	opExecuteBundles      opcode = 11 // n ids[n]
-	opDrawIndirect        opcode = 12 // id offset(2)
-	opDrawIndexedIndirect opcode = 13 // id offset(2)
-	opBeginRenderPass     opcode = 20 // see beginRenderPassWords
-	opEndPass             opcode = 21
-	opBeginComputePass    opcode = 22
-	opDispatch            opcode = 23 // x y z
-	opDispatchIndirect    opcode = 24 // id offset(2)
-	opWriteBuffer         opcode = 30 // id offset(2) dataOffset length
-	opCopyBufferToBuffer  opcode = 31 // src srcOffset(2) dst dstOffset(2) size(2)
-	opSubmit              opcode = 40
-)
+// The stream format is package wire's (opcodes, layout, the Go reader);
+// this file is its only writer, replay.js and wire.Decode its readers.
 
 // Codes for enumerations in the stream; 0 is "not given".
 var (

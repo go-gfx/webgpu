@@ -2,8 +2,8 @@
 // encoding. Go records a submit as uint32 words (and the bytes of its
 // queue writes); Recorder.Submit copies both into arrays it owns and
 // makes one call to replay(), which issues the WebGPU calls. Its Go mirror
-// is decode.go: both read the same format with the same checks, and the
-// package's tests hold them to agreeing.
+// is package wire (wire.Decode): both read the same format with the same
+// checks, and the package's tests hold them to agreeing.
 //
 // Load it as a same-origin script (importScripts in a worker, a <script>
 // element in a window) before the Go program records; under a strict CSP

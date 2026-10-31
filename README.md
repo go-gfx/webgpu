@@ -83,9 +83,18 @@ err = device.WaitSubmitted(ctx, seq)           // only when the CPU must wait fo
 The recorder checks every command as the direct API does. `replay.js`
 (`webgpu.ReplayJS`, served as `webgpu.ReplayJSName`) is a plain same-origin
 script, so a page with `script-src 'self'` serves it like `wasm_exec.js`; it
-evaluates nothing and refuses a malformed stream. Its Go mirror (`decode.go`)
-reads the same format with the same checks; it is fuzzed, and a browser test
+evaluates nothing and refuses a malformed stream. Its Go mirror, `wire.Decode`,
+reads the same format with the same checks. It is fuzzed, and a browser test
 holds the two readers to the same verdict on thousands of mutated streams.
+
+The stream format is exported as package **`wire`**, which has no GOOS
+constraint. It contains the opcodes, `Decode`, `StreamVersion` and
+`Remap`. `Remap` rewrites every object id of a stream through a mapping
+and refuses any id the mapping does not grant. With it, a stream recorded
+in one place (for example, a VM guest sending it over the
+[go-virtio/gpu webgpu-batch](https://github.com/go-virtio/gpu/blob/main/docs/WEBGPU.md)
+context) can be checked and replayed by another table without a second
+implementation of the format.
 
 Submissions are numbered on a timeline (package `timeline`, shared by
 `Queue.Submit` and `Recorder.Submit`): completing number n completes every

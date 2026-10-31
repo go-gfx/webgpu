@@ -71,7 +71,7 @@ func expectedCalls(cmds []cmd) []string {
 		}
 	}
 	for _, c := range cmds {
-		switch c.op {
+		switch c.Op {
 		case opBeginRenderPass:
 			open()
 			out = append(out, "beginRenderPass")
@@ -87,7 +87,7 @@ func expectedCalls(cmds []cmd) []string {
 			}
 			enc = false
 		default:
-			out = append(out, names[c.op])
+			out = append(out, names[c.Op])
 		}
 	}
 	return out
