@@ -96,6 +96,17 @@ in one place (for example, a VM guest sending it over the
 context) can be checked and replayed by another table without a second
 implementation of the format.
 
+Objects are created remotely the same way. `EncodeDescriptor` turns a
+creation descriptor (buffer, texture, view, sampler, shader module, bind
+group layout, pipeline layout, bind group, render or compute pipeline)
+into bytes. It names each referenced object by its replay id, in a
+header (`wire.SplitDescriptor`), and `wire.RemapDescriptor` translates
+those ids without reading the body. `DecodeDescriptor` rebuilds the
+descriptor with the receiver's objects. It refuses unknown fields, a
+wrong reference count and references of the wrong type, and it never
+keeps an object that the body itself carries. The decoder is fuzzed
+(`FuzzDecodeDescriptor`).
+
 Submissions are numbered on a timeline (package `timeline`, shared by
 `Queue.Submit` and `Recorder.Submit`): completing number n completes every
 earlier one, the fence model of virtio-gpu, so many waiters cost one
