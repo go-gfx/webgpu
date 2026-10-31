@@ -94,7 +94,10 @@ and refuses any id the mapping does not grant. With it, a stream recorded
 in one place (for example, a VM guest sending it over the
 [go-virtio/gpu webgpu-batch](https://github.com/go-virtio/gpu/blob/main/docs/WEBGPU.md)
 context) can be checked and replayed by another table without a second
-implementation of the format.
+implementation of the format. `Device.Replay(words, data, refs...)`
+submits such a stream once its ids name this device's objects. It is
+checked with `wire.Decode` first, and it may name only the objects passed
+in `refs`.
 
 Objects are created remotely the same way. `EncodeDescriptor` turns a
 creation descriptor (buffer, texture, view, sampler, shader module, bind

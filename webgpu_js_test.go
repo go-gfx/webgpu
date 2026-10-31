@@ -164,6 +164,37 @@ func TestBufferRoundTripAndBounds(t *testing.T) {
 	}
 }
 
+// TestReplayForeignStream: a stream written by hand with the objects'
+// replay ids, as a remote recorder would, replays on the device; a stream
+// naming an object that was not granted is refused before the browser.
+func TestReplayForeignStream(t *testing.T) {
+	installReplay(t)
+	d := newDev(t, nil)
+	src := must(d.CreateBuffer(BufferDescriptor{Size: 16, Usage: BufferUsageCopyDst | BufferUsageCopySrc}))(t)
+	dst := must(d.CreateBuffer(BufferDescriptor{Size: 16, Usage: BufferUsageMapRead | BufferUsageCopyDst}))(t)
+	s, ds := idOf(&src.object), idOf(&dst.object)
+	words := []uint32{30, s, 0, 0, 0, 16, 31, s, 0, 0, ds, 0, 0, 16, 0, 40}
+	data := []byte("replayed from afar")[:16]
+	seq, err := d.Replay(words, data, src, dst)
+	if err != nil || seq == 0 {
+		t.Fatalf("Replay: %d %v", seq, err)
+	}
+	if err := d.WaitSubmitted(ctx(t), seq); err != nil {
+		t.Fatal(err)
+	}
+	if err := dst.MapAsync(ctx(t), MapModeRead, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, 16)
+	if err := dst.ReadMapped(0, got); err != nil || string(got) != string(data) {
+		t.Fatalf("dst %q %v", got, err)
+	}
+	_ = dst.Unmap()
+	if _, err := d.Replay(words, data, src); err == nil {
+		t.Error("a stream naming an ungranted buffer replayed")
+	}
+}
+
 func TestMappedAtCreation(t *testing.T) {
 	d := newDev(t, nil)
 	b := must(d.CreateBuffer(BufferDescriptor{Size: 16, Usage: BufferUsageMapWrite | BufferUsageCopySrc, MappedAtCreation: true}))(t)
