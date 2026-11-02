@@ -684,3 +684,31 @@ func TestDestroyAndCancel(t *testing.T) {
 		t.Fatalf("encoder on a destroyed device: %v", err)
 	}
 }
+
+// TestReadTexture: the helper returns the texels row after row, without
+// the 256-byte row padding, for a width that is not a multiple of 256.
+func TestReadTexture(t *testing.T) {
+	d := newDev(t, nil)
+	tex := must(d.CreateTexture(TextureDescriptor{Size: Extent3D{Width: 5, Height: 3}, Format: TextureFormatR8Uint,
+		Usage: TextureUsageCopyDst | TextureUsageCopySrc}))(t)
+	px := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+	if err := d.Queue().WriteTexture(TexelCopyTextureInfo{Texture: tex}, px, TexelCopyBufferLayout{BytesPerRow: 5}, Extent3D{Width: 5, Height: 3}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := d.ReadTexture(ctx(t), TexelCopyTextureInfo{Texture: tex}, 5, 3, 1)
+	if err != nil || string(got) != string(px) {
+		t.Fatalf("ReadTexture = %v, %v", got, err)
+	}
+	// A sub-rectangle from an origin.
+	got, err = d.ReadTexture(ctx(t), TexelCopyTextureInfo{Texture: tex, Origin: Origin3D{X: 1, Y: 1}}, 3, 2, 1)
+	if err != nil || string(got) != string([]byte{7, 8, 9, 12, 13, 14}) {
+		t.Fatalf("sub-rectangle = %v, %v", got, err)
+	}
+	var be *BoundsError
+	if _, err := d.ReadTexture(ctx(t), TexelCopyTextureInfo{Texture: tex}, 0, 3, 1); !errors.As(err, &be) {
+		t.Fatalf("empty size: %v", err)
+	}
+	if _, err := d.ReadTexture(ctx(t), TexelCopyTextureInfo{Texture: tex}, 6, 3, 1); err == nil {
+		t.Fatal("a region past the texture was read")
+	}
+}
