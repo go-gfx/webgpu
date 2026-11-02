@@ -44,6 +44,7 @@ type Surface struct {
 	desc       SurfaceDescriptor
 	format     TextureFormat
 	standalone bool
+	view       *TextureView // CurrentView's reused handle
 }
 
 // NewSurface creates a standalone OffscreenCanvas of desc's size, within
@@ -147,6 +148,39 @@ func (s *Surface) CurrentTexture() (*Texture, error) {
 	}.norm()}
 	t.v = v
 	return t, nil
+}
+
+// CurrentView is CurrentTexture followed by CreateView(nil), for a frame
+// loop: the returned view (and its Texture) are the same Go objects every
+// call, standing for the new browser objects of this frame, so a frame
+// allocates no handle. The view is valid until the next call; do not keep
+// it, and do not Destroy its texture.
+func (s *Surface) CurrentView() (*TextureView, error) {
+	if s.dev.isLost() {
+		return nil, ErrDestroyed
+	}
+	var tv, vv js.Value
+	if err := try("getCurrentTexture", func() {
+		tv = s.ctx.Call("getCurrentTexture")
+		vv = tv.Call("createView")
+	}); err != nil {
+		return nil, err
+	}
+	if s.view == nil {
+		usage := s.desc.Usage
+		if usage == 0 {
+			usage = TextureUsageRenderAttachment
+		}
+		t := &Texture{canvas: true, desc: TextureDescriptor{
+			Size: Extent3D{Width: uint32(s.desc.Width), Height: uint32(s.desc.Height)}, Format: s.format, Usage: usage,
+		}.norm()}
+		s.view = &TextureView{tex: t}
+	}
+	s.view.tex.v = tv
+	s.view.tex.desc.Size = Extent3D{Width: uint32(s.desc.Width), Height: uint32(s.desc.Height), DepthOrArrayLayers: 1}
+	s.view.v = vv
+	s.view.rearm()
+	return s.view, nil
 }
 
 // Present ends the frame. For a standalone surface it returns the frame

@@ -43,6 +43,11 @@ tex, err := s.CurrentTexture()     // render into a view of it
 bitmap, err := s.Present()         // transferToImageBitmap: post it to the page, or close it
 ```
 
+`s.CurrentView()` is `CurrentTexture` plus `CreateView(nil)` for a frame
+loop: it returns the same Go handles every frame, standing for the new browser
+objects, and a whole frame (texture write, view, pass, submit) allocates 4
+objects (`TestFrameAllocs` holds it to that).
+
 A standalone OffscreenCanvas never shows itself (the specification says the
 canvas is presented automatically only for a placeholder canvas): `Present`
 moves the frame out as an `ImageBitmap` without a copy, for a worker to post to

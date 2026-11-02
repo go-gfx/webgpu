@@ -76,6 +76,17 @@ func (o *object) markPut() bool {
 	return true
 }
 
+// rearm marks the object's replay slot stale: its JavaScript value was
+// replaced, so the next recording that names it puts the new value under
+// the same id. It lets a handle that stands for a fresh browser object
+// every frame (a canvas's current texture and its view) be one Go object.
+func (o *object) rearm() {
+	registry.mu.Lock()
+	o.put = false
+	o.ready.Store(0)
+	registry.mu.Unlock()
+}
+
 func freeID(id uint32) {
 	registry.mu.Lock()
 	drop := registry.drop
@@ -106,6 +117,8 @@ type Recorder struct {
 	err   error
 	pass  int // 0 none, 1 render, 2 compute
 	stage recorderStage
+	rp    RenderPassRecorder
+	cp    ComputePassRecorder
 }
 
 // NewRecorder returns a Recorder for the device.
@@ -259,7 +272,10 @@ func f32(v float64) uint32 { return math.Float32bits(float32(v)) }
 // BeginRenderPass records encoder.beginRenderPass and returns the pass
 // recorder. Up to 8 color attachments.
 func (r *Recorder) BeginRenderPass(desc RenderPassDescriptor) *RenderPassRecorder {
-	p := &RenderPassRecorder{r: r}
+	// The recorder owns its pass recorders (a frame allocates none); a
+	// pass recorder is valid until the next Begin*Pass of the same kind.
+	p := &r.rp
+	*p = RenderPassRecorder{r: r}
 	if !r.in(0, "beginRenderPass inside a pass") {
 		return p
 	}
@@ -267,7 +283,7 @@ func (r *Recorder) BeginRenderPass(desc RenderPassDescriptor) *RenderPassRecorde
 		r.fail(bounds("beginRenderPass", "%d color attachments", len(desc.ColorAttachments)))
 		return p
 	}
-	if _, err := desc.toJS(); err != nil { // the same checks as the direct path
+	if err := desc.check(); err != nil { // the same checks as the direct path
 		r.fail(err)
 		return p
 	}
@@ -306,7 +322,8 @@ func b2u(b bool) uint32 {
 
 // BeginComputePass records encoder.beginComputePass.
 func (r *Recorder) BeginComputePass() *ComputePassRecorder {
-	p := &ComputePassRecorder{r: r}
+	p := &r.cp
+	*p = ComputePassRecorder{r: r}
 	if !r.in(0, "beginComputePass inside a pass") {
 		return p
 	}

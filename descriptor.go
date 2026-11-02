@@ -709,15 +709,29 @@ type RenderPassDescriptor struct {
 	MaxDrawCount           uint64
 }
 
+// check is toJS's validation without building the JavaScript objects: the
+// Recorder's per-frame path calls it and allocates nothing.
+func (r RenderPassDescriptor) check() error {
+	for i, c := range r.ColorAttachments {
+		if c != nil && c.View == nil {
+			return fmt.Errorf("webgpu: render pass: color attachment %d has no view", i)
+		}
+	}
+	if ds := r.DepthStencilAttachment; ds != nil && ds.View == nil {
+		return fmt.Errorf("webgpu: render pass: depth-stencil attachment has no view")
+	}
+	return nil
+}
+
 func (r RenderPassDescriptor) toJS() (map[string]any, error) {
+	if err := r.check(); err != nil {
+		return nil, err
+	}
 	cs := make([]any, len(r.ColorAttachments))
 	for i, c := range r.ColorAttachments {
 		if c == nil {
 			cs[i] = nil
 			continue
-		}
-		if c.View == nil {
-			return nil, fmt.Errorf("webgpu: render pass: color attachment %d has no view", i)
 		}
 		m := map[string]any{"view": c.View.ref(), "clearValue": c.ClearValue.toJS(), "loadOp": string(c.LoadOp), "storeOp": string(c.StoreOp)}
 		if c.DepthSlice != nil {
@@ -731,9 +745,6 @@ func (r RenderPassDescriptor) toJS() (map[string]any, error) {
 	d := map[string]any{"colorAttachments": cs}
 	setStr(d, "label", r.Label)
 	if ds := r.DepthStencilAttachment; ds != nil {
-		if ds.View == nil {
-			return nil, fmt.Errorf("webgpu: render pass: depth-stencil attachment has no view")
-		}
 		m := map[string]any{"view": ds.View.ref()}
 		if ds.DepthLoadOp == LoadOpClear {
 			m["depthClearValue"] = ds.DepthClearValue

@@ -358,7 +358,13 @@ func (t *Texture) Destroy() {
 // CreateView is texture.createView(); nil desc is the default view.
 func (t *Texture) CreateView(desc *TextureViewDescriptor) (*TextureView, error) {
 	var v js.Value
-	if err := try("createView", func() { v = t.v.Call("createView", js.ValueOf(desc.toJS())) }); err != nil {
+	if err := try("createView", func() {
+		if desc == nil { // the default view: no descriptor object to build
+			v = t.v.Call("createView")
+			return
+		}
+		v = t.v.Call("createView", js.ValueOf(desc.toJS()))
+	}); err != nil {
 		return nil, err
 	}
 	tv := &TextureView{tex: t}

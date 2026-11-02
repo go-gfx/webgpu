@@ -373,3 +373,21 @@ func TestRangeHelpersAndTimeline(t *testing.T) {
 		t.Fatal("timeline")
 	}
 }
+
+func TestRearm(t *testing.T) {
+	o := &object{}
+	id, unput := o.batchID()
+	if id == 0 || !unput || !o.markPut() {
+		t.Fatal("first recording")
+	}
+	if _, unput := o.batchID(); unput {
+		t.Fatal("put objects are not put again")
+	}
+	o.rearm()
+	if id2, unput := o.batchID(); id2 != id || !unput {
+		t.Fatalf("after rearm: id %d (was %d), unput %v", id2, id, unput)
+	}
+	if !o.markPut() {
+		t.Fatal("rearmed object not put again")
+	}
+}
