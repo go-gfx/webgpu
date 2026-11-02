@@ -175,6 +175,36 @@ func (r *Recorder) WriteBuffer(b *Buffer, offset uint64, data []byte) {
 	r.data = append(r.data, data...)
 }
 
+// WriteTexture records queue.writeTexture: the bytes are copied into the
+// recorder now and written, in order, when Submit replays the stream, in
+// the same single call as the passes. Checked like Queue.WriteTexture
+// (region inside the mip level, layout inside data).
+func (r *Recorder) WriteTexture(dst TexelCopyTextureInfo, data []byte, layout TexelCopyBufferLayout, size Extent3D) {
+	const op = "writeTexture"
+	if !r.in(0, op+" inside a pass") {
+		return
+	}
+	if err := checkTextureCopy(op, dst, layout, uint64(len(data)), size, true); err != nil {
+		r.fail(err)
+		return
+	}
+	asp, ok := aspectCode[dst.Aspect]
+	if !ok {
+		r.fail(bounds(op, "aspect %q", dst.Aspect))
+		return
+	}
+	if !dataFits(len(r.data), len(data)) {
+		r.fail(bounds(op, "more than 4 GiB recorded in one submit"))
+		return
+	}
+	size = size.norm()
+	lo, hi := lohi(layout.Offset)
+	r.words = append(r.words, uint32(opWriteTexture), r.id(&dst.Texture.object), dst.MipLevel,
+		dst.Origin.X, dst.Origin.Y, dst.Origin.Z, asp, uint32(len(r.data)), uint32(len(data)),
+		lo, hi, layout.BytesPerRow, layout.RowsPerImage, size.Width, size.Height, size.DepthOrArrayLayers)
+	r.data = append(r.data, data...)
+}
+
 // CopyBufferToBuffer records encoder.copyBufferToBuffer, checked.
 func (r *Recorder) CopyBufferToBuffer(src *Buffer, srcOffset uint64, dst *Buffer, dstOffset, size uint64) {
 	if !r.in(0, "copyBufferToBuffer inside a pass") {

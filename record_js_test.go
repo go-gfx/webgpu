@@ -50,6 +50,7 @@ func fakeGPU(calls *[]string) (device, queue js.Value) {
 	method(device, "createCommandEncoder", func() any { return enc })
 	queue = obj()
 	method(queue, "writeBuffer", nil)
+	method(queue, "writeTexture", nil)
 	method(queue, "submit", nil)
 	return device, queue
 }
@@ -62,6 +63,7 @@ func expectedCalls(cmds []cmd) []string {
 		opSetScissorRect: "setScissorRect", opSetBlendConstant: "setBlendConstant", opSetStencilReference: "setStencilReference",
 		opExecuteBundles: "executeBundles", opDrawIndirect: "drawIndirect", opDrawIndexedIndirect: "drawIndexedIndirect",
 		opEndPass: "end", opDispatch: "dispatchWorkgroups", opDispatchIndirect: "dispatchWorkgroupsIndirect", opWriteBuffer: "writeBuffer",
+		opWriteTexture: "writeTexture",
 	}
 	var out []string
 	enc := false
