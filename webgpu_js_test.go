@@ -235,6 +235,43 @@ func TestRecordedTextureCopy(t *testing.T) {
 	}
 }
 
+// TestRecordedTextureWrite: queue.writeTexture in a batch, with an origin
+// and a layout offset, in the same submit as the copy that reads it back.
+func TestRecordedTextureWrite(t *testing.T) {
+	installReplay(t)
+	d := newDev(t, nil)
+	tex := must(d.CreateTexture(TextureDescriptor{Size: Extent3D{Width: 64, Height: 4}, Format: TextureFormatRGBA8Unorm,
+		Usage: TextureUsageCopyDst | TextureUsageCopySrc}))(t)
+	data := make([]byte, 8+256*2)
+	for i := range data {
+		data[i] = byte(i*7 + 3)
+	}
+	r := d.NewRecorder()
+	// Rows 1 and 2 of the texture, from data[8:], 256 bytes per row.
+	r.WriteTexture(TexelCopyTextureInfo{Texture: tex, Origin: Origin3D{Y: 1}}, data, TexelCopyBufferLayout{Offset: 8, BytesPerRow: 256}, Extent3D{Width: 64, Height: 2})
+	out := must(d.CreateBuffer(BufferDescriptor{Size: 256 * 2, Usage: BufferUsageMapRead | BufferUsageCopyDst}))(t)
+	if _, err := r.Submit(); err != nil {
+		t.Fatal(err)
+	}
+	enc := must(d.CreateCommandEncoder("read"))(t)
+	if err := enc.CopyTextureToBuffer(TexelCopyTextureInfo{Texture: tex, Origin: Origin3D{Y: 1}}, TexelCopyBufferInfo{Buffer: out, Layout: TexelCopyBufferLayout{BytesPerRow: 256}}, Extent3D{Width: 64, Height: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Queue().Submit(must(enc.Finish())(t)); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.MapAsync(ctx(t), MapModeRead, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, 512)
+	if err := out.ReadMapped(0, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(data[8:]) {
+		t.Fatal("the written rows differ from the recorded data")
+	}
+}
+
 func TestMappedAtCreation(t *testing.T) {
 	d := newDev(t, nil)
 	b := must(d.CreateBuffer(BufferDescriptor{Size: 16, Usage: BufferUsageMapWrite | BufferUsageCopySrc, MappedAtCreation: true}))(t)

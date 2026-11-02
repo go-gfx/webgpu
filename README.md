@@ -61,7 +61,8 @@ where headless Chromium needs Skia on Vulkan to present at all.
 ## Batched encoding: one JavaScript call per submit
 
 A `syscall/js` call costs about ten times the WebGPU call it carries. A
-`Recorder` records a whole submit in Go (queue writes, render and compute
+`Recorder` records a whole submit in Go (buffer and texture writes
+(`WriteBuffer`, `WriteTexture`: stream version 3), render and compute
 passes, dynamic offsets included) as `uint32` words; `Submit` copies them to
 JavaScript once and `replay.js` issues the WebGPU calls:
 

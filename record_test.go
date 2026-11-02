@@ -62,13 +62,15 @@ func recordAll(t *testing.T) (*Recorder, []opcode) {
 	if err := c.End(); err != nil {
 		t.Fatal(err)
 	}
+	wt := tex(TextureDescriptor{Size: Extent3D{Width: 4, Height: 2}, Format: TextureFormatRGBA8Unorm, Usage: TextureUsageCopyDst})
+	r.WriteTexture(TexelCopyTextureInfo{Texture: wt, Origin: Origin3D{X: 1}}, make([]byte, 16), TexelCopyBufferLayout{Offset: 4, BytesPerRow: 16, RowsPerImage: 2}, Extent3D{Width: 2, Height: 1})
 	if err := r.finish(); err != nil {
 		t.Fatal(err)
 	}
 	return r, []opcode{opWriteBuffer, opCopyBufferToBuffer, opCopyTextureToTexture, opBeginRenderPass, opSetPipeline, opSetBindGroup, opSetBindGroup, opSetBindGroup,
 		opSetVertexBuffer, opSetIndexBuffer, opSetViewport, opSetScissorRect, opSetBlendConstant, opSetStencilReference, opDraw, opDrawIndexed,
 		opDrawIndirect, opDrawIndexedIndirect, opExecuteBundles, opEndPass, opBeginComputePass, opSetPipeline, opSetBindGroup, opDispatch,
-		opDispatchIndirect, opEndPass, opSubmit}
+		opDispatchIndirect, opEndPass, opWriteTexture, opSubmit}
 }
 
 func TestRecordDecodeRoundTrip(t *testing.T) {
@@ -91,8 +93,14 @@ func TestRecordDecodeRoundTrip(t *testing.T) {
 	if a := cmds[0].Args; a[1] != 4 || a[2] != 0 || a[3] != 0 || a[4] != 8 {
 		t.Fatalf("writeBuffer args %v", a)
 	}
-	if string(r.data) != "\x01\x02\x03\x04\x05\x06\x07\x08" {
+	if string(r.data) != "\x01\x02\x03\x04\x05\x06\x07\x08"+string(make([]byte, 16)) {
 		t.Fatalf("data %v", r.data)
+	}
+	// writeTexture: texture id, mip 0, origin (1,0,0), aspect 0, bytes [8,+16),
+	// layout offset 4, 16 bytes per row, 2 rows per image, extent 2x1x1.
+	if a := cmds[len(cmds)-2].Args; a[1] != 0 || a[2] != 1 || a[5] != 0 || a[6] != 8 || a[7] != 16 || a[8] != 4 || a[9] != 0 ||
+		a[10] != 16 || a[11] != 2 || a[12] != 2 || a[13] != 1 || a[14] != 1 {
+		t.Fatalf("writeTexture %v", a)
 	}
 	if a := cmds[2].Args; a[1] != 1 || a[2] != 1 || a[3] != 2 || a[5] != 1 || a[11] != 3 || a[12] != 4 || a[13] != 3 || a[14] != 1 {
 		t.Fatalf("copyTextureToTexture %v", a)
@@ -155,6 +163,26 @@ func TestRecorderRefusals(t *testing.T) {
 		},
 		"texture copy aspect": func(r *Recorder) {
 			r.CopyTextureToTexture(TexelCopyTextureInfo{Texture: &Texture{}, Aspect: "plane0-only"}, TexelCopyTextureInfo{Texture: &Texture{}}, Extent3D{})
+		},
+		"write texture nil": func(r *Recorder) { r.WriteTexture(TexelCopyTextureInfo{}, nil, TexelCopyBufferLayout{}, Extent3D{}) },
+		"write texture usage": func(r *Recorder) {
+			r.WriteTexture(TexelCopyTextureInfo{Texture: tex(TextureDescriptor{Size: Extent3D{Width: 4, Height: 4}, Format: TextureFormatRGBA8Unorm, Usage: TextureUsageTextureBinding})},
+				make([]byte, 64), TexelCopyBufferLayout{BytesPerRow: 16}, Extent3D{Width: 4, Height: 4})
+		},
+		"write texture aspect": func(r *Recorder) {
+			r.WriteTexture(TexelCopyTextureInfo{Texture: tex(TextureDescriptor{Size: Extent3D{Width: 4, Height: 4}, Format: TextureFormatRGBA8Unorm, Usage: TextureUsageCopyDst}), Aspect: "plane0-only"},
+				make([]byte, 64), TexelCopyBufferLayout{BytesPerRow: 16}, Extent3D{Width: 4, Height: 4})
+		},
+		"write texture in pass": func(r *Recorder) {
+			r.BeginComputePass()
+			r.WriteTexture(TexelCopyTextureInfo{}, nil, TexelCopyBufferLayout{}, Extent3D{})
+		},
+		"write texture 4 GiB": func(r *Recorder) {
+			old := maxData
+			maxData = 8
+			defer func() { maxData = old }()
+			r.WriteTexture(TexelCopyTextureInfo{Texture: tex(TextureDescriptor{Size: Extent3D{Width: 4, Height: 4}, Format: TextureFormatRGBA8Unorm, Usage: TextureUsageCopyDst})},
+				make([]byte, 64), TexelCopyBufferLayout{BytesPerRow: 16}, Extent3D{Width: 4, Height: 4})
 		},
 		"texture copy in pass": func(r *Recorder) {
 			r.BeginComputePass()

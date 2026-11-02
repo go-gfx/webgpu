@@ -15,6 +15,7 @@ func stream() []uint32 {
 		uint32(WriteBuffer), 1, 0, 0, 0, 4,
 		uint32(CopyBufferToBuffer), 1, 0, 0, 2, 0, 0, 4, 0,
 		uint32(CopyTextureToTexture), 2, 0, 1, 2, 0, 1, 3, 0, 0, 0, 0, 3, 4, 4, 1,
+		uint32(WriteTexture), 2, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 1, 1, 1,
 		uint32(BeginRenderPass), 2,
 		3, 2, 2, 1, 0, 0, 0, 0, // color 0: view 3, resolve 2
 		0, 0, 0, 0, 0, 0, 0, 0, // color 1 unused
@@ -50,7 +51,7 @@ func TestDecode(t *testing.T) {
 		ops = append(ops, c.Op)
 		n += 1 + len(c.Args)
 	}
-	want := []Op{WriteBuffer, CopyBufferToBuffer, CopyTextureToTexture, BeginRenderPass, SetPipeline, SetBindGroup, SetBindGroup,
+	want := []Op{WriteBuffer, CopyBufferToBuffer, CopyTextureToTexture, WriteTexture, BeginRenderPass, SetPipeline, SetBindGroup, SetBindGroup,
 		SetVertexBuffer, SetIndexBuffer, Draw, DrawIndirect, ExecuteBundles, EndPass, BeginComputePass,
 		SetPipeline, DispatchIndirect, EndPass, Submit}
 	if !reflect.DeepEqual(ops, want) || n != len(w) {
@@ -110,6 +111,12 @@ func TestDecodeRejects(t *testing.T) {
 		{"texture copy src aspect", []uint32{32, 1, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 1, 1, 1}, 0, "aspect"},
 		{"texture copy dst aspect", []uint32{32, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 4, 1, 1, 1}, 0, "aspect"},
 		{"texture copy truncated", []uint32{32, 1, 0, 0}, 0, "truncated"},
+		{"write texture unknown", []uint32{33, 9, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 1, 1, 1}, 4, "unknown object 9"},
+		{"write texture aspect", []uint32{33, 1, 0, 0, 0, 0, 4, 0, 4, 0, 0, 4, 0, 1, 1, 1}, 4, "aspect"},
+		{"write texture past data", []uint32{33, 1, 0, 0, 0, 0, 0, 2, 4, 0, 0, 4, 0, 1, 1, 1}, 4, "past 4 bytes"},
+		{"write texture overflow", []uint32{33, 1, 0, 0, 0, 0, 0, math.MaxUint32, 2, 0, 0, 4, 0, 1, 1, 1}, 4, "past"},
+		{"write texture truncated", []uint32{33, 1, 0, 0}, 4, "truncated"},
+		{"write texture in pass", append(append([]uint32{}, rp...), 33, 1, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 1, 1, 1), 4, "out of place"},
 		{"texture copy in pass", append(append([]uint32{}, rp...), 32, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1), 0, "out of place"},
 	} {
 		_, err := Decode(c.w, c.ndata, known)
@@ -152,10 +159,10 @@ func TestRemap(t *testing.T) {
 			changed++
 		}
 	}
-	// ids: write 1, copy 2, texture copy 2, colour 2, depth 1, pipeline 1,
-	// group 1 (the unbind's 0 stays), vertex 1, index 1, indirect 1,
-	// bundles 2, pipeline 1, dispatch 1 = 17.
-	if changed != 17 || len(a) != len(b) {
+	// ids: write 1, copy 2, texture copy 2, texture write 1, colour 2,
+	// depth 1, pipeline 1, group 1 (the unbind's 0 stays), vertex 1, index
+	// 1, indirect 1, bundles 2, pipeline 1, dispatch 1 = 18.
+	if changed != 18 || len(a) != len(b) {
 		t.Fatalf("%d ids changed, %d/%d commands", changed, len(a), len(b))
 	}
 	if seen[0] != 0 {
