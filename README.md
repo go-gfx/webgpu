@@ -131,6 +131,14 @@ earlier one, the fence model of virtio-gpu, so many waiters cost one
 `onSubmittedWorkDone` round trip. The package has no dependency and no notion
 of a GPU.
 
+## Helpers
+
+- `atlas.Shelf` (package `atlas`, no GOOS constraint): a shelf packer that
+  places many small images (textures, lightmaps, glyphs) in one texture.
+- `Device.ReadTexture(ctx, src, width, height, bytesPerTexel)`: copies a
+  region of a texture to Go memory, rows unpadded (the copy to a buffer wants
+  rows padded to 256 bytes). For tests and screenshots, not a frame loop.
+
 ## Errors at the call, not later on the device
 
 WebGPU reports most mistakes asynchronously. This package checks in Go first
