@@ -66,6 +66,14 @@ type Config struct {
 	// MaxWorkgroups bounds a Dispatch's counts per dimension; 0 is
 	// wire.DefaultMaxWorkgroups (WebGPU's default limit).
 	MaxWorkgroups uint32
+	// WorkgroupInvocations is the most invocations one workgroup can hold,
+	// the device's maxComputeInvocationsPerWorkgroup (0: 256, WebGPU's
+	// default). A Dispatch is counted at its workgroup counts times this.
+	WorkgroupInvocations uint32
+	// MaxDispatchInvocations bounds one Dispatch, and MaxStreamInvocations
+	// the Dispatches of one stream together, in invocations (0: no bound);
+	// see wire.CheckInvocations. A DispatchIndirect is not counted.
+	MaxDispatchInvocations, MaxStreamInvocations uint64
 }
 
 // Errors. Every refusal wraps one; after any error the Context is lost.
@@ -101,7 +109,12 @@ type Context struct {
 	bufs    map[uint32]bufInfo // backend id -> buffer size and usage
 	lost    error
 	maxRead uint64
+	peak    uint64
 }
+
+// PeakInvocations is the most invocations one stream of this context asked
+// for (wire.CheckInvocations' total): what a quota would have to allow.
+func (c *Context) PeakInvocations() uint64 { return c.peak }
 
 // New returns a Context on be. If be is a Reader, streams may read back.
 func New(be Backend, cfg Config) *Context {
@@ -198,6 +211,15 @@ func (c *Context) Stream(words []uint32, data []byte, window []byte) error {
 	if err := wire.CheckRanges(cmds, func(id uint32) (uint64, bool) { b, ok := c.bufs[id]; return b.size, ok }, c.cfg.MaxWorkgroups); err != nil {
 		return c.fail(err)
 	}
+	wgi := c.cfg.WorkgroupInvocations
+	if wgi == 0 {
+		wgi = 256
+	}
+	total, err := wire.CheckInvocations(cmds, wgi, c.cfg.MaxDispatchInvocations, c.cfg.MaxStreamInvocations)
+	if err != nil {
+		return c.fail(err)
+	}
+	c.peak = max(c.peak, total)
 	var reads []wire.Read
 	for _, cmd := range cmds {
 		if r, ok := wire.ReadOf(cmd); ok {

@@ -339,3 +339,42 @@ func TestRangeRefusals(t *testing.T) {
 		}
 	}
 }
+
+// TestInvocationQuota (go-wasmcontainers/gpu#26): a dispatch whose workgroup
+// count times the workgroup bound is above the per-dispatch or per-stream quota
+// is refused before the backend is called, and the peak is recorded.
+func TestInvocationQuota(t *testing.T) {
+	disp := func(n ...uint32) []uint32 {
+		var w []uint32
+		w = append(w, uint32(wire.BeginComputePass))
+		for _, x := range n {
+			w = append(w, uint32(wire.Dispatch), x, 1, 1)
+		}
+		return append(w, uint32(wire.EndPass))
+	}
+	cfg := Config{WorkgroupInvocations: 64, MaxDispatchInvocations: 64 * 100, MaxStreamInvocations: 64 * 150}
+	for _, tc := range []struct {
+		name string
+		w    []uint32
+		ok   bool
+	}{
+		{"at the dispatch quota", disp(100), true},
+		{"over the dispatch quota", disp(101), false},
+		{"two within, together over the stream quota", disp(100, 51), false},
+		{"two within the stream quota", disp(100, 50), true},
+	} {
+		f := newFake()
+		c := New(f, cfg)
+		err := c.Stream(tc.w, nil, nil)
+		switch {
+		case tc.ok && (err != nil || f.replays != 1):
+			t.Errorf("%s: %v, %d replays", tc.name, err, f.replays)
+		case !tc.ok && (!errors.Is(err, wire.ErrBudget) || f.replays != 0 || c.Lost() == nil):
+			t.Errorf("%s: err %v, %d replays, lost %v", tc.name, err, f.replays, c.Lost())
+		}
+	}
+	c := New(newFake(), cfg)
+	if err := c.Stream(disp(100, 50), nil, nil); err != nil || c.PeakInvocations() != 64*150 {
+		t.Errorf("peak %d, err %v", c.PeakInvocations(), err)
+	}
+}
