@@ -293,3 +293,49 @@ func FuzzStream(f *testing.F) {
 		}
 	})
 }
+
+// TestRangeRefusals (M4): streams a recorder would not write but a hostile
+// guest can — a write or copy past a buffer, an oversized dispatch — are
+// refused by the host with a Go error before the backend is called.
+func TestRangeRefusals(t *testing.T) {
+	words := func(op wire.Op, a ...uint32) []uint32 { return append([]uint32{uint32(op)}, a...) }
+	pass := func(body ...uint32) []uint32 {
+		w := words(wire.BeginComputePass)
+		w = append(w, body...)
+		return append(w, uint32(wire.EndPass))
+	}
+	cases := []struct {
+		name string
+		w    []uint32
+		ok   bool
+	}{
+		{"write inside", words(wire.WriteBuffer, 1, 0, 0, 0, 16), true},
+		{"write past the end", words(wire.WriteBuffer, 1, 56, 0, 0, 16), false},
+		{"write at a 64-bit offset", words(wire.WriteBuffer, 1, 0, 1, 0, 4), false},
+		{"copy inside", words(wire.CopyBufferToBuffer, 1, 0, 0, 2, 0, 0, 64, 0), true},
+		{"copy past the destination", words(wire.CopyBufferToBuffer, 1, 0, 0, 2, 8, 0, 64, 0), false},
+		{"copy from a buffer past its end", words(wire.CopyBufferToBuffer, 2, 0, 0, 1, 0, 0, 65, 0), false},
+		{"dispatch at the limit", pass(uint32(wire.Dispatch), 65535, 1, 1), true},
+		{"dispatch over the limit", pass(uint32(wire.Dispatch), 65536, 1, 1), false},
+	}
+	for _, tc := range cases {
+		f := newFake()
+		c := New(f, Config{})
+		for _, id := range []uint32{1, 2} {
+			kind, desc, err := webgpu.EncodeDescriptor(webgpu.BufferDescriptor{Size: 64, Usage: webgpu.BufferUsageCopySrc | webgpu.BufferUsageCopyDst})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := c.Create(id, uint32(kind), desc); err != nil {
+				t.Fatal(err)
+			}
+		}
+		err := c.Stream(tc.w, make([]byte, 16), nil)
+		switch {
+		case tc.ok && (err != nil || f.replays != 1):
+			t.Errorf("%s: %v, %d replays", tc.name, err, f.replays)
+		case !tc.ok && (!errors.Is(err, wire.ErrRange) || f.replays != 0 || c.Lost() == nil):
+			t.Errorf("%s: err %v, %d replays, lost %v", tc.name, err, f.replays, c.Lost())
+		}
+	}
+}

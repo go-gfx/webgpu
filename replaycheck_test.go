@@ -1,6 +1,7 @@
 package webgpu
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -46,5 +47,19 @@ func TestCheckReplay(t *testing.T) {
 	maxData = old
 	if err == nil {
 		t.Error("data past the limit")
+	}
+}
+
+// M4: Device.Replay refuses buffer ranges and dispatch sizes before replay.js.
+func TestCheckReplayRanges(t *testing.T) {
+	b := &Buffer{size: 16}
+	id := idOf(&b.object)
+	for name, w := range map[string][]uint32{
+		"write past the end": {uint32(wire.WriteBuffer), id, 8, 0, 0, 16},
+		"dispatch too large": {uint32(wire.BeginComputePass), uint32(wire.Dispatch), 65536, 1, 1, uint32(wire.EndPass)},
+	} {
+		if _, err := checkReplay(w, make([]byte, 16), []any{b}); !errors.Is(err, wire.ErrRange) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

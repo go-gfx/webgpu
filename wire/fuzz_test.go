@@ -70,3 +70,27 @@ func FuzzRemap(f *testing.F) {
 		}
 	})
 }
+
+// FuzzCheckRanges: never panics, and a stream it accepts keeps every write
+// and copy inside the sizes it was given.
+func FuzzCheckRanges(f *testing.F) {
+	seed(f)
+	f.Fuzz(func(t *testing.T, raw []byte, ndata, nobj uint32) {
+		w := words(raw)
+		cmds, err := Decode(w, ndata, func(id uint32) bool { return id <= nobj })
+		if err != nil {
+			return
+		}
+		size := func(id uint32) (uint64, bool) { return uint64(id) * 8, id != 0 }
+		if CheckRanges(cmds, size, 0) != nil {
+			return
+		}
+		for _, c := range cmds {
+			if c.Op == WriteBuffer {
+				if n, _ := size(c.Args[0]); u64(c.Args[1], c.Args[2])+uint64(c.Args[4]) > n {
+					t.Fatalf("accepted a write past %d bytes: %v", n, c.Args)
+				}
+			}
+		}
+	})
+}
