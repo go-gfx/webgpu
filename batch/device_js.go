@@ -126,6 +126,15 @@ func (b *DeviceBackend) Read(id uint32, offset uint64, dst []byte) error {
 	return err
 }
 
+// Objects returns the handles the backend holds (for inspection by tests).
+func (b *DeviceBackend) Objects() []any {
+	out := make([]any, 0, len(b.objs))
+	for _, o := range b.objs {
+		out = append(out, o)
+	}
+	return out
+}
+
 // Close implements Backend: it destroys what is left.
 func (b *DeviceBackend) Close() {
 	for id := range b.objs {
