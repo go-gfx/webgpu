@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -229,5 +230,47 @@ func TestReadLatency(t *testing.T) {
 	for i, l := range lanes {
 		slices.Sort(times[i])
 		t.Logf("%-26s median %7.0f us  min %7.0f  max %7.0f  (30 rounds)", l.name, times[i][len(times[i])/2], times[i][0], times[i][len(times[i])-1])
+	}
+}
+
+// TestInvalidWGSLOnGPU: WGSL the GPU refuses is an error of Create, wrapping
+// ErrInvalid and carrying the compiler's message, for a reserved word and a
+// syntax error; a valid source still passes (the control).
+func TestInvalidWGSLOnGPU(t *testing.T) {
+	d := gpuDevice(t)
+	for name, tc := range map[string]struct {
+		code string
+		ok   bool
+		msg  string
+	}{
+		"valid control": {shader, true, ""},
+		"reserved word": {`@group(0) @binding(0) var<storage, read> meta: array<u32>;
+@compute @workgroup_size(1) fn main() { _ = meta[0]; }`, false, "meta"},
+		"syntax error":    {`@compute @workgroup_size(1) fn main( { }`, false, ""},
+		"unknown builtin": {`@compute @workgroup_size(1) fn main() { let x = nosuchfunction(1.0); }`, false, "nosuchfunction"},
+	} {
+		c := New(NewDeviceBackend(d), Config{})
+		kind, b, err := webgpu.EncodeDescriptor(webgpu.ShaderModuleDescriptor{Code: tc.code})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := new(webgpu.ShaderModule)
+		id, err := webgpu.ReplayID(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = c.Create(id, uint32(kind), b)
+		switch {
+		case tc.ok && err != nil:
+			t.Errorf("%s: %v", name, err)
+		case !tc.ok && !errors.Is(err, ErrInvalid):
+			t.Errorf("%s: %v, want ErrInvalid", name, err)
+		case !tc.ok && !strings.Contains(err.Error(), tc.msg):
+			t.Errorf("%s: %q lacks %q", name, err, tc.msg)
+		}
+		if err != nil {
+			t.Logf("%s: %v", name, err)
+		}
+		c.Close()
 	}
 }
