@@ -136,7 +136,13 @@ translated before the backend sees anything (a stream can only name objects its
 own context created), a failed message loses the context, and the reads of a
 stream are checked before it runs: a `Reader` backend, a window within the
 quota (`Config.MaxRead`, 1 MiB by default), `MAP_READ` buffers, ranges inside
-the buffers and the window. Under `GOOS=js`, `NewDeviceBackend(device)` is the
+the buffers and the window. Before the backend is called, `wire.CheckRanges`
+refuses what `wire.Decode` cannot know, with `wire.ErrRange`: a `WriteBuffer`
+or `CopyBufferToBuffer` range outside its buffer, an indirect dispatch or draw
+whose arguments leave the buffer, a `Dispatch` above
+`maxComputeWorkgroupsPerDimension` (65 535, or `Config.MaxWorkgroups`);
+`Device.Replay` applies the same rule to its granted buffers. WebGPU validation
+stays the second line. Under `GOOS=js`, `NewDeviceBackend(device)` is the
 backend on a browser device. go-virtio/gpudev and the go-wasmcontainers host
 module both build on it. Measured read-back round trips on an Apple GPU
 (Chromium, Metal) are in [docs/readback.md](docs/readback.md).

@@ -141,6 +141,16 @@ func Remap(w []uint32, ndata uint32, f func(uint32) (uint32, bool)) error {
 	return walk(w, ndata, remapper(w, f), func(Cmd) {})
 }
 
+// RemapCmds is Remap that also returns every command, in order, with its
+// ids translated (Args alias w).
+func RemapCmds(w []uint32, ndata uint32, f func(uint32) (uint32, bool)) ([]Cmd, error) {
+	var out []Cmd
+	if err := walk(w, ndata, remapper(w, f), func(c Cmd) { out = append(out, c) }); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func remapper(w []uint32, f func(uint32) (uint32, bool)) func(int, bool) error {
 	return func(pos int, nullable bool) error {
 		id := w[pos]

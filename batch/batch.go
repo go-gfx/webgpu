@@ -63,6 +63,9 @@ type Config struct {
 	// passes, and the bytes the stream's reads return together. 0 is
 	// DefaultMaxRead; it is capped at wire.MaxReadWindow.
 	MaxRead uint32
+	// MaxWorkgroups bounds a Dispatch's counts per dimension; 0 is
+	// wire.DefaultMaxWorkgroups (WebGPU's default limit).
+	MaxWorkgroups uint32
 }
 
 // Errors. Every refusal wraps one; after any error the Context is lost.
@@ -181,9 +184,20 @@ func (c *Context) Stream(words []uint32, data []byte, window []byte) error {
 	}
 	// Data offsets are uint32: bytes past 4 GiB are unaddressable, so the
 	// bound the stream is checked against is clamped, not refused.
-	reads, err := wire.RemapReads(words, uint32(min(uint64(len(data)), math.MaxUint32)), c.host)
+	cmds, err := wire.RemapCmds(words, uint32(min(uint64(len(data)), math.MaxUint32)), c.host)
 	if err != nil {
 		return c.fail(err)
+	}
+	// What wire.Decode cannot know and WebGPU would only refuse later: buffer
+	// ranges and dispatch sizes, checked here before the backend is called.
+	if err := wire.CheckRanges(cmds, func(id uint32) (uint64, bool) { b, ok := c.bufs[id]; return b.size, ok }, c.cfg.MaxWorkgroups); err != nil {
+		return c.fail(err)
+	}
+	var reads []wire.Read
+	for _, cmd := range cmds {
+		if r, ok := wire.ReadOf(cmd); ok {
+			reads = append(reads, r)
+		}
 	}
 	if len(reads) > 0 {
 		if err := c.checkReads(reads, window); err != nil {

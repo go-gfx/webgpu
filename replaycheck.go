@@ -68,7 +68,17 @@ func checkReplay(words []uint32, data []byte, refs []any) ([]*object, error) {
 		objs[i] = o
 		granted[idOf(o)] = true
 	}
-	if _, err := wire.Decode(words, uint32(len(data)), func(id uint32) bool { return granted[id] }); err != nil {
+	cmds, err := wire.Decode(words, uint32(len(data)), func(id uint32) bool { return granted[id] })
+	if err != nil {
+		return nil, fmt.Errorf("webgpu: Replay: %w", err)
+	}
+	sizes := map[uint32]uint64{}
+	for _, h := range refs {
+		if b, ok := h.(*Buffer); ok {
+			sizes[idOf(&b.object)] = b.size
+		}
+	}
+	if err := wire.CheckRanges(cmds, func(id uint32) (uint64, bool) { n, ok := sizes[id]; return n, ok }, wire.DefaultMaxWorkgroups); err != nil {
 		return nil, fmt.Errorf("webgpu: Replay: %w", err)
 	}
 	return objs, nil
