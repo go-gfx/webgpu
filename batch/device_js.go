@@ -81,10 +81,21 @@ func (b *DeviceBackend) Create(kind uint32, desc []byte) (uint32, error) {
 		serr := b.dev.PopErrorScope(context.Background())
 		var ge *webgpu.GPUError
 		if errors.As(serr, &ge) {
+			msg := ge.Message
+			if m, ok := o.(*webgpu.ShaderModule); ok && m != nil && err == nil {
+				// The compiler's own text: some browsers keep it out of the error.
+				if cms, cerr := m.CompilationMessages(context.Background()); cerr == nil {
+					for _, cm := range cms {
+						if cm.Type == "error" {
+							msg += "\n" + cm.String()
+						}
+					}
+				}
+			}
 			if o != nil && err == nil {
 				b.discard(o)
 			}
-			return 0, fmt.Errorf("%w: %s", ErrInvalid, ge.Message)
+			return 0, fmt.Errorf("%w: %s", ErrInvalid, msg)
 		} else if serr != nil && err == nil {
 			err = serr
 		}
