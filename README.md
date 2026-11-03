@@ -141,7 +141,14 @@ refuses what `wire.Decode` cannot know, with `wire.ErrRange`: a `WriteBuffer`
 or `CopyBufferToBuffer` range outside its buffer, an indirect dispatch or draw
 whose arguments leave the buffer, a `Dispatch` above
 `maxComputeWorkgroupsPerDimension` (65 535, or `Config.MaxWorkgroups`);
-`Device.Replay` applies the same rule to its granted buffers. WebGPU validation
+`Device.Replay` applies the same rule to its granted buffers. A compute quota
+follows: `wire.CheckInvocations` (`Config.MaxDispatchInvocations`,
+`Config.MaxStreamInvocations`, counted at the workgroup counts times
+`Config.WorkgroupInvocations`, the device's `maxComputeInvocationsPerWorkgroup`)
+refuses, with `wire.ErrBudget` (which wraps `wire.ErrRange`), a stream asking
+for more invocations than the quota; `Context.PeakInvocations` reports the
+largest stream seen. An indirect dispatch takes its counts from GPU memory and
+is not counted; a time budget in the host is what bounds it. WebGPU validation
 stays the second line. Under `GOOS=js`, `NewDeviceBackend(device)` is the
 backend on a browser device. go-virtio/gpudev and the go-wasmcontainers host
 module both build on it. Measured read-back round trips on an Apple GPU
