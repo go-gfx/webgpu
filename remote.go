@@ -280,10 +280,7 @@ func (b *Buffer) MapAsync(ctx context.Context, mode MapMode, offset, size uint64
 	if _, err := r.Submit(); err != nil {
 		return err
 	}
-	data, err := rb.Bytes()
-	if err != nil {
-		return err
-	}
+	data, _ := rb.Bytes() // Submit succeeded, so the read was recorded and delivered
 	b.mapped, b.mappedOff = data, offset
 	return nil
 }

@@ -145,7 +145,7 @@ func (c *Context) Create(id, kind uint32, desc []byte) error {
 		// A buffer's size and usage bound its reads. A descriptor the
 		// decoder refuses leaves the buffer unreadable, not the context
 		// lost: the backend accepted it.
-		d, err := webgpu.DecodeDescriptor(wire.KindBuffer, desc, func(uint32) (any, error) { return nil, ErrRefused })
+		d, err := webgpu.DecodeDescriptor(wire.KindBuffer, desc, nil) // a buffer names no object
 		if bd, ok := d.(webgpu.BufferDescriptor); err == nil && ok {
 			c.bufs[h] = bufInfo{size: bd.Size, usage: bd.Usage}
 		}
@@ -179,10 +179,9 @@ func (c *Context) Stream(words []uint32, data []byte, window []byte) error {
 	if c.lost != nil {
 		return fmt.Errorf("%w: %v", ErrLost, c.lost)
 	}
-	if uint64(len(data)) > math.MaxUint32 {
-		return c.fail(fmt.Errorf("%w: %d data bytes", ErrRefused, len(data)))
-	}
-	reads, err := wire.RemapReads(words, uint32(len(data)), c.host)
+	// Data offsets are uint32: bytes past 4 GiB are unaddressable, so the
+	// bound the stream is checked against is clamped, not refused.
+	reads, err := wire.RemapReads(words, uint32(min(uint64(len(data)), math.MaxUint32)), c.host)
 	if err != nil {
 		return c.fail(err)
 	}

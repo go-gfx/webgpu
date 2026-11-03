@@ -94,6 +94,16 @@ func TestRecorderReadBufferRefusals(t *testing.T) {
 			t.Errorf("%s: accepted (%v, %v)", name, err, r.Err())
 		}
 	}
+	// Without a quota, the wire's own bound on the window applies.
+	big, err := NewRemoteDevice(newSink(), "big", nil).CreateBuffer(BufferDescriptor{Size: 1 << 27, Usage: BufferUsageMapRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2 := NewRemoteDevice(newSink(), "x", nil).NewRecorder()
+	r2.ReadBuffer(big, 0, 40<<20)
+	if _, err := r2.ReadBuffer(big, 0, 40<<20).Bytes(); err == nil {
+		t.Error("two reads above the window bound were accepted")
+	}
 	var qe *QuotaError
 	r := d.NewRecorder()
 	r.ReadBuffer(b, 0, 32)

@@ -132,6 +132,13 @@ func TestReadRefusals(t *testing.T) {
 		}
 		mk(1, 64, webgpu.BufferUsageMapRead|webgpu.BufferUsageCopyDst)
 		mk(2, 64, webgpu.BufferUsageStorage)
+		kind, desc, err := webgpu.EncodeDescriptor(webgpu.SamplerDescriptor{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Create(3, uint32(kind), desc); err != nil {
+			t.Fatal(err)
+		}
 		return c, nil, 1, 2
 	}
 	rd := func(id uint32, off, size, win uint32) []uint32 {
@@ -153,7 +160,8 @@ func TestReadRefusals(t *testing.T) {
 		{"unaligned offset", Config{}, rb, rd(1, 4, 8, 0), 64},
 		{"unaligned size", Config{}, rb, rd(1, 0, 6, 0), 64},
 		{"window above the quota", Config{MaxRead: 32}, rb, rd(1, 0, 8, 0), 64},
-		{"reads above the quota", Config{MaxRead: 32}, rb, append(rd(1, 0, 24, 0)[:6:6], rd(1, 24, 16, 24)...), 40},
+		{"reads above the quota", Config{MaxRead: 32}, rb, append(rd(1, 0, 24, 0)[:6:6], rd(1, 0, 24, 8)...), 32},
+		{"not a buffer", Config{}, rb, rd(3, 0, 8, 0), 64},
 		{"backend cannot read", Config{}, func(f *fake) Backend { return f }, rd(1, 0, 8, 0), 64},
 	} {
 		f := newFake()
