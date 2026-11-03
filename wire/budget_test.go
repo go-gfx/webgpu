@@ -22,6 +22,7 @@ func TestCheckInvocations(t *testing.T) {
 		{"stream sum", []Cmd{d(1, 1, 1), d(1, 1, 1)}, 0, 128, 128, false},
 		{"stream sum over", []Cmd{d(1, 1, 1), d(1, 1, 1), d(1, 1, 1)}, 0, 128, 128 * 2, true},
 		{"no bound", []Cmd{d(65535, 65535, 65535)}, 0, 0, math.MaxUint64, false},
+		{"the total saturates across dispatches", []Cmd{d(math.MaxUint32, math.MaxUint32, math.MaxUint32), d(math.MaxUint32, math.MaxUint32, math.MaxUint32)}, 0, 0, math.MaxUint64, false},
 		{"saturates, never wraps", []Cmd{d(math.MaxUint32, math.MaxUint32, math.MaxUint32)}, 1 << 40, 0, 0, true},
 		{"zero count is no work", []Cmd{d(0, math.MaxUint32, math.MaxUint32)}, 1, 1, 0, false},
 		{"indirect is not counted", []Cmd{ind}, 1, 1, 0, false},
