@@ -27,7 +27,10 @@ func TestCheckInvocations(t *testing.T) {
 		{"zero count is no work", []Cmd{d(0, math.MaxUint32, math.MaxUint32)}, 1, 1, 0, false},
 		{"indirect is not counted", []Cmd{ind}, 1, 1, 0, false},
 	} {
-		total, err := CheckInvocations(tc.cmds, 64, tc.perDisp, tc.perStr)
+		total, largest, err := CheckInvocations(tc.cmds, 64, tc.perDisp, tc.perStr)
+		if largest > total && err == nil {
+			t.Errorf("%s: largest %d above total %d", tc.name, largest, total)
+		}
 		if (err != nil) != tc.bad {
 			t.Errorf("%s: error %v, want refusal %v", tc.name, err, tc.bad)
 		}

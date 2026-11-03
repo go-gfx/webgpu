@@ -110,11 +110,16 @@ type Context struct {
 	lost    error
 	maxRead uint64
 	peak    uint64
+	// peakDispatch is the largest single Dispatch seen.
+	peakDispatch uint64
 }
 
 // PeakInvocations is the most invocations one stream of this context asked
-// for (wire.CheckInvocations' total): what a quota would have to allow.
-func (c *Context) PeakInvocations() uint64 { return c.peak }
+// for (wire.CheckInvocations' total): what a stream quota would have to
+// allow. PeakDispatchInvocations is the largest single Dispatch: what a
+// dispatch quota would have to allow.
+func (c *Context) PeakInvocations() uint64         { return c.peak }
+func (c *Context) PeakDispatchInvocations() uint64 { return c.peakDispatch }
 
 // New returns a Context on be. If be is a Reader, streams may read back.
 func New(be Backend, cfg Config) *Context {
@@ -215,11 +220,11 @@ func (c *Context) Stream(words []uint32, data []byte, window []byte) error {
 	if wgi == 0 {
 		wgi = 256
 	}
-	total, err := wire.CheckInvocations(cmds, wgi, c.cfg.MaxDispatchInvocations, c.cfg.MaxStreamInvocations)
+	total, largest, err := wire.CheckInvocations(cmds, wgi, c.cfg.MaxDispatchInvocations, c.cfg.MaxStreamInvocations)
 	if err != nil {
 		return c.fail(err)
 	}
-	c.peak = max(c.peak, total)
+	c.peak, c.peakDispatch = max(c.peak, total), max(c.peakDispatch, largest)
 	var reads []wire.Read
 	for _, cmd := range cmds {
 		if r, ok := wire.ReadOf(cmd); ok {

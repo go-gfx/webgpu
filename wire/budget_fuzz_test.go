@@ -22,7 +22,7 @@ func FuzzCheckInvocations(f *testing.F) {
 		if err != nil {
 			return
 		}
-		total, err := CheckInvocations(cmds, wg, perDisp, perStream)
+		total, _, err := CheckInvocations(cmds, wg, perDisp, perStream)
 		if err != nil {
 			if !errors.Is(err, ErrBudget) || !errors.Is(err, ErrRange) {
 				t.Fatalf("refusal without ErrBudget: %v", err)

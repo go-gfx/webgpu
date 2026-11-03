@@ -374,7 +374,7 @@ func TestInvocationQuota(t *testing.T) {
 		}
 	}
 	c := New(newFake(), cfg)
-	if err := c.Stream(disp(100, 50), nil, nil); err != nil || c.PeakInvocations() != 64*150 {
-		t.Errorf("peak %d, err %v", c.PeakInvocations(), err)
+	if err := c.Stream(disp(100, 50), nil, nil); err != nil || c.PeakInvocations() != 64*150 || c.PeakDispatchInvocations() != 64*100 {
+		t.Errorf("peak %d, largest dispatch %d, err %v", c.PeakInvocations(), c.PeakDispatchInvocations(), err)
 	}
 }
