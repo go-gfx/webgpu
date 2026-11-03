@@ -108,7 +108,37 @@ func (r *Recorder) Submit() (seq uint64, err error) {
 	if err := r.finish(); err != nil {
 		return 0, err
 	}
-	return r.replay()
+	seq, err = r.replay()
+	if err != nil || len(r.reads) == 0 {
+		return seq, err
+	}
+	return seq, r.readBack(seq)
+}
+
+// readBack performs the recorded ReadBuffer commands once the GPU has
+// executed the submit: mapAsync, copy, unmap, per read, in order. The wire
+// format's reads are the host's job on a replayed stream (replay.js only
+// checks them); a Recorder on a browser device is its own host.
+func (r *Recorder) readBack(seq uint64) error {
+	ctx := context.Background()
+	if err := r.dev.WaitSubmitted(ctx, seq); err != nil {
+		return err
+	}
+	for _, rb := range r.reads {
+		if err := rb.buf.MapAsync(ctx, MapModeRead, rb.offset, uint64(rb.size)); err != nil {
+			return err
+		}
+		data := make([]byte, rb.size)
+		err := rb.buf.ReadMapped(rb.offset, data)
+		if uerr := rb.buf.Unmap(); err == nil {
+			err = uerr
+		}
+		if err != nil {
+			return err
+		}
+		rb.data = data
+	}
+	return nil
 }
 
 // Replay submits a stream recorded elsewhere — another process, a

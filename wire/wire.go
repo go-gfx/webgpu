@@ -20,8 +20,12 @@ import "fmt"
 // opcode's layout changes, so that a remote host and its guests can
 // check they speak the same stream.
 //
-// 2 added CopyTextureToTexture. 3 added WriteTexture.
-const StreamVersion = 3
+// 2 added CopyTextureToTexture. 3 added WriteTexture. 4 added ReadBuffer.
+const StreamVersion = 4
+
+// MaxReadWindow bounds the read window of one submit (ReadBuffer's
+// windowOffset + size), 64 MiB. A host grants a smaller one.
+const MaxReadWindow = 64 << 20
 
 // Op is a command's opcode, the first word of a command.
 type Op uint32
@@ -59,7 +63,16 @@ const (
 	// relative to dataOffset (queue.writeTexture's dataLayout.offset).
 	// Aspect as in CopyTextureToTexture.
 	WriteTexture Op = 33
-	Submit       Op = 40
+	// id offset(2) size windowOffset. Read-back (GPUBuffer.mapAsync with
+	// MAP_READ, then getMappedRange and unmap): once the stream's GPU work
+	// has completed, the bytes [offset, offset+size) of buffer id are
+	// copied into [windowOffset, windowOffset+size) of the submit's read
+	// window, a byte range the caller of the replay owns. The buffer needs
+	// MAP_READ; offset is a multiple of 8, size a nonzero multiple of 4
+	// (the mapAsync rules of the WebGPU specification). replay.js ignores
+	// the command: a host performs it after the replay, in stream order.
+	ReadBuffer Op = 34
+	Submit     Op = 40
 )
 
 // Limits the readers enforce on counts inside one command.
@@ -81,7 +94,7 @@ var argc = map[Op]int{
 	SetIndexBuffer: 6, SetViewport: 6, SetScissorRect: 4, SetBlendConstant: 4,
 	SetStencilReference: 1, ExecuteBundles: -1, DrawIndirect: 3, DrawIndexedIndirect: 3,
 	BeginRenderPass: -1, EndPass: 0, BeginComputePass: 0, Dispatch: 3, DispatchIndirect: 3,
-	WriteBuffer: 5, CopyBufferToBuffer: 8, CopyTextureToTexture: 15, WriteTexture: 15, Submit: 0,
+	WriteBuffer: 5, CopyBufferToBuffer: 8, CopyTextureToTexture: 15, WriteTexture: 15, ReadBuffer: 5, Submit: 0,
 }
 
 // where each opcode may appear: 0 outside a pass, 1 render pass, 2
@@ -91,7 +104,7 @@ var opPlace = map[Op]int{
 	SetIndexBuffer: 1, SetViewport: 1, SetScissorRect: 1, SetBlendConstant: 1,
 	SetStencilReference: 1, ExecuteBundles: 1, DrawIndirect: 1, DrawIndexedIndirect: 1,
 	BeginRenderPass: 0, EndPass: -1, BeginComputePass: 0, Dispatch: 2, DispatchIndirect: 2,
-	WriteBuffer: 0, CopyBufferToBuffer: 0, CopyTextureToTexture: 0, WriteTexture: 0, Submit: 0,
+	WriteBuffer: 0, CopyBufferToBuffer: 0, CopyTextureToTexture: 0, WriteTexture: 0, ReadBuffer: 0, Submit: 0,
 }
 
 // Decode reads a stream with replay.js's checks and returns its commands.
@@ -125,7 +138,11 @@ func Decode(w []uint32, ndata uint32, known func(uint32) bool) ([]Cmd, error) {
 // that recorded the stream to the table of the replayer: an id f does not
 // know is an error, so a stream can only name objects f grants.
 func Remap(w []uint32, ndata uint32, f func(uint32) (uint32, bool)) error {
-	return walk(w, ndata, func(pos int, nullable bool) error {
+	return walk(w, ndata, remapper(w, f), func(Cmd) {})
+}
+
+func remapper(w []uint32, f func(uint32) (uint32, bool)) func(int, bool) error {
+	return func(pos int, nullable bool) error {
 		id := w[pos]
 		if id == 0 && nullable {
 			return nil
@@ -139,7 +156,7 @@ func Remap(w []uint32, ndata uint32, f func(uint32) (uint32, bool)) error {
 		}
 		w[pos] = to
 		return nil
-	}, func(Cmd) {})
+	}
 }
 
 // walk is the one reader of the format: it checks structure, placement
@@ -245,6 +262,10 @@ func walk(w []uint32, ndata uint32, obj func(pos int, nullable bool) error, emit
 			if err == nil && uint64(a[6])+uint64(a[7]) > uint64(ndata) {
 				err = fmt.Errorf("replay: data [%d, +%d) past %d bytes", a[6], a[7], ndata)
 			}
+		case ReadBuffer:
+			if err = obj(at, false); err == nil {
+				err = checkRead(a)
+			}
 		case CopyTextureToTexture:
 			if err = obj(at, false); err == nil {
 				err = obj(at+6, false)
@@ -260,6 +281,53 @@ func walk(w []uint32, ndata uint32, obj func(pos int, nullable bool) error, emit
 	}
 	if pass != 0 {
 		return fmt.Errorf("replay: pass left open")
+	}
+	return nil
+}
+
+// Read is a decoded ReadBuffer command.
+type Read struct {
+	ID           uint32 // the buffer (the replayer's id after Remap)
+	Offset       uint64 // into the buffer, a multiple of 8
+	Size         uint32 // a nonzero multiple of 4
+	WindowOffset uint32 // into the read window
+}
+
+// ReadOf decodes c if it is a ReadBuffer command a reader returned.
+func ReadOf(c Cmd) (Read, bool) {
+	if c.Op != ReadBuffer || len(c.Args) != 5 {
+		return Read{}, false
+	}
+	a := c.Args
+	return Read{ID: a[0], Offset: uint64(a[1]) | uint64(a[2])<<32, Size: a[3], WindowOffset: a[4]}, true
+}
+
+// RemapReads is Remap that also returns the stream's ReadBuffer commands,
+// in order, with their ids translated. A host checks them against its
+// buffers' sizes and usage, and its window, before it replays anything.
+func RemapReads(w []uint32, ndata uint32, f func(uint32) (uint32, bool)) ([]Read, error) {
+	var reads []Read
+	err := walk(w, ndata, remapper(w, f), func(c Cmd) {
+		if r, ok := ReadOf(c); ok {
+			reads = append(reads, r)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return reads, nil
+}
+
+// checkRead checks a ReadBuffer's arguments (the mapAsync alignment rules
+// and the window's bound); a is the command's argument words.
+func checkRead(a []uint32) error {
+	switch {
+	case a[1]&7 != 0:
+		return fmt.Errorf("replay: read offset %d is not a multiple of 8", uint64(a[1])|uint64(a[2])<<32)
+	case a[3] == 0 || a[3]&3 != 0:
+		return fmt.Errorf("replay: read size %d is not a nonzero multiple of 4", a[3])
+	case uint64(a[4])+uint64(a[3]) > MaxReadWindow:
+		return fmt.Errorf("replay: read window [%d, +%d) past %d bytes", a[4], a[3], MaxReadWindow)
 	}
 	return nil
 }

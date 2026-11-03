@@ -18,6 +18,10 @@ type Quota struct {
 	Pipelines int
 	// ShaderBytes bounds one WGSL source. 0 is no limit.
 	ShaderBytes int
+	// ReadBytes bounds the read window of one submit: the bytes its
+	// Recorder.ReadBuffer commands may return together. 0 is no limit
+	// (wire.MaxReadWindow still bounds it).
+	ReadBytes int
 	// Features lists the optional features a device may require. Any
 	// other required feature is refused, timestamp-query included unless
 	// listed.

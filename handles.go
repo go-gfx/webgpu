@@ -195,6 +195,11 @@ type Buffer struct {
 	owned
 	size  uint64
 	usage BufferUsage
+
+	// A remote device's mapped range (MapAsync, ReadMapped, Unmap).
+	mapMu     sync.Mutex
+	mapped    []byte
+	mappedOff uint64
 }
 
 // Size is the buffer's size in bytes.
