@@ -27,6 +27,8 @@ func TestCheckRanges(t *testing.T) {
 		{"copy src past end", Cmd{CopyBufferToBuffer, []uint32{2, 0, 0, 1, 0, 0, 33, 0}}, false},
 		{"copy size above 4 GiB", Cmd{CopyBufferToBuffer, []uint32{1, 0, 0, 2, 0, 0, 0, 1}}, false},
 		{"copy of a non-buffer", Cmd{CopyBufferToBuffer, []uint32{9, 0, 0, 2, 0, 0, 4, 0}}, false},
+		{"copy to a non-buffer", Cmd{CopyBufferToBuffer, []uint32{1, 0, 0, 9, 0, 0, 4, 0}}, false},
+		{"indirect dispatch of a non-buffer", Cmd{DispatchIndirect, []uint32{9, 0, 0}}, false},
 		{"dispatch at the limit", Cmd{Dispatch, []uint32{65535, 1, 1}}, true},
 		{"dispatch x over", Cmd{Dispatch, []uint32{65536, 1, 1}}, false},
 		{"dispatch z over", Cmd{Dispatch, []uint32{1, 1, 1 << 31}}, false},
@@ -60,5 +62,8 @@ func TestRemapCmds(t *testing.T) {
 	}
 	if _, ok := ReadOf(cmds[1]); !ok {
 		t.Fatal("ReadOf")
+	}
+	if _, err := RemapCmds(w, 4, func(uint32) (uint32, bool) { return 0, false }); err == nil {
+		t.Fatal("an id the mapping does not grant was accepted")
 	}
 }
