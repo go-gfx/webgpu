@@ -5,6 +5,7 @@ package webgpu
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // The remote device: outside the browser (a VM guest, a native program)
@@ -14,9 +15,10 @@ import (
 // validated (toJS) and charged before it is sent, so a remote device
 // refuses at the call what a browser device refuses.
 //
-// It covers object creation, destruction, Queue.WriteBuffer and the
-// Recorder. Mapping buffers (readback), Queue.WriteTexture, command
-// encoders and render bundle encoders return ErrRemoteUnsupported.
+// It covers object creation, destruction, Queue.WriteBuffer, the Recorder
+// and, when the sink is a ReadSink, read-back (Recorder.ReadBuffer, and
+// Buffer.MapAsync for reading). Queue.WriteTexture, command encoders and
+// render bundle encoders return ErrRemoteUnsupported.
 
 // ErrNotRemote: a GPU call outside the browser on a Device that is not a
 // remote device.
@@ -245,9 +247,74 @@ func (p *ComputePipeline) Release() {
 	}
 }
 
-// MapAsync: readback does not cross to the host yet.
-func (b *Buffer) MapAsync(context.Context, MapMode, uint64, uint64) error {
-	return ErrRemoteUnsupported
+// MapAsync maps [offset, offset+size) of a MAP_READ buffer for reading
+// (size 0: to the end), with GPUBuffer.mapAsync's rules: the buffer must be
+// unmapped, the offset a multiple of 8, the size a multiple of 4, inside
+// the buffer. The range is read from the host by a one-command submit that
+// returns the bytes (Recorder.ReadBuffer), so the sink must be a ReadSink;
+// ReadMapped then copies from them and Unmap releases them. A remote
+// device cannot map for writing (use Queue.WriteBuffer).
+func (b *Buffer) MapAsync(ctx context.Context, mode MapMode, offset, size uint64) error {
+	if mode != MapModeRead {
+		return fmt.Errorf("%w: only MapModeRead", ErrRemoteUnsupported)
+	}
+	if b.isDead() {
+		return ErrDestroyed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if size == 0 {
+		if offset > b.size {
+			return bounds("mapAsync", "offset %d past the buffer's %d bytes", offset, b.size)
+		}
+		size = b.size - offset
+	}
+	b.mapMu.Lock()
+	defer b.mapMu.Unlock()
+	if b.mapped != nil {
+		return ErrMapState
+	}
+	r := b.dev.NewRecorder()
+	rb := r.ReadBuffer(b, offset, size)
+	if _, err := r.Submit(); err != nil {
+		return err
+	}
+	data, err := rb.Bytes()
+	if err != nil {
+		return err
+	}
+	b.mapped, b.mappedOff = data, offset
+	return nil
+}
+
+// ReadMapped copies len(dst) bytes of the mapped range, starting at the
+// buffer offset, into dst.
+func (b *Buffer) ReadMapped(offset uint64, dst []byte) error {
+	b.mapMu.Lock()
+	defer b.mapMu.Unlock()
+	if b.mapped == nil {
+		return bounds("getMappedRange", "buffer is not mapped")
+	}
+	if offset < b.mappedOff || offset-b.mappedOff > uint64(len(b.mapped)) || uint64(len(dst)) > uint64(len(b.mapped))-(offset-b.mappedOff) {
+		return bounds("getMappedRange", "range [%d, +%d) outside the mapped [%d, +%d)", offset, len(dst), b.mappedOff, len(b.mapped))
+	}
+	copy(dst, b.mapped[offset-b.mappedOff:])
+	return nil
+}
+
+// WriteMapped: a remote device maps for reading only.
+func (b *Buffer) WriteMapped(uint64, []byte) error {
+	return fmt.Errorf("%w: only MapModeRead", ErrRemoteUnsupported)
+}
+
+// Unmap releases a mapped range; on an unmapped buffer it does nothing, as
+// GPUBuffer.unmap does.
+func (b *Buffer) Unmap() error {
+	b.mapMu.Lock()
+	b.mapped = nil
+	b.mapMu.Unlock()
+	return nil
 }
 
 // WriteBuffer sends queue.writeBuffer as a one-command submit, checked as
@@ -288,12 +355,25 @@ func (r *Recorder) Submit() (seq uint64, err error) {
 	if d.isLost() {
 		return 0, ErrDestroyed
 	}
-	seq = d.tl.Next()
-	if err := d.remote.Submit(r.words, r.data); err != nil {
+	var window []byte
+	if len(r.reads) > 0 {
+		rs, ok := d.remote.(ReadSink)
+		if !ok {
+			return 0, fmt.Errorf("%w: the sink returns no read-backs (ReadSink)", ErrRemoteUnsupported)
+		}
+		window = make([]byte, r.win)
+		seq = d.tl.Next()
+		err = rs.SubmitRead(r.words, r.data, window)
+	} else {
+		seq = d.tl.Next()
+		err = d.remote.Submit(r.words, r.data)
+	}
+	if err != nil {
 		d.lose(err)
 		return 0, err
 	}
 	d.tl.Signal(seq)
+	r.deliver(window)
 	return seq, r.err
 }
 

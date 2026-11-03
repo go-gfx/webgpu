@@ -35,6 +35,7 @@ const (
 	opCopyBufferToBuffer   = wire.CopyBufferToBuffer
 	opCopyTextureToTexture = wire.CopyTextureToTexture
 	opWriteTexture         = wire.WriteTexture
+	opReadBuffer           = wire.ReadBuffer
 	opSubmit               = wire.Submit
 )
 

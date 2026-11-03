@@ -67,7 +67,7 @@ where headless Chromium needs Skia on Vulkan to present at all.
 
 A `syscall/js` call costs about ten times the WebGPU call it carries. A
 `Recorder` records a whole submit in Go (buffer and texture writes
-(`WriteBuffer`, `WriteTexture`: stream version 3), render and compute
+(`WriteBuffer`, `WriteTexture`, `ReadBuffer`: stream version 4), render and compute
 passes, dynamic offsets included) as `uint32` words; `Submit` copies them to
 JavaScript once and `replay.js` issues the WebGPU calls:
 
@@ -111,8 +111,35 @@ Outside the browser, `NewRemoteDevice(sink, label, quota)` returns a
 example a VM guest's virtio-gpu webgpu-batch context, where a real device
 runs them. The checks and quotas are the browser path's, so a remote
 device refuses at the call what a browser device refuses. A sink error
-loses the device. Readback (`MapAsync`), `WriteTexture` and command
-encoders are not carried yet (`ErrRemoteUnsupported`).
+loses the device. `WriteTexture` and command encoders are not carried
+(`ErrRemoteUnsupported`).
+
+**Read-back** (stream version 4, `wire.ReadBuffer`). `mapAsync` is
+asynchronous, which a replayed stream cannot express, so
+`Recorder.ReadBuffer(buf, offset, size)` records a read: once the submit's GPU
+work has completed, the replayer maps the range, copies it into a **read
+window** of the submit and unmaps; `Submit` returns the bytes in the
+`Readback`. The rules are `GPUBuffer.mapAsync`'s: the buffer has `MAP_READ`
+(which WebGPU allows only with `COPY_DST`, so the data is first copied there by
+`CopyBufferToBuffer`), the offset is a multiple of 8, the size a nonzero
+multiple of 4, the range inside the buffer. The window is bounded per submit
+(`Quota.ReadBytes`, at most `wire.MaxReadWindow` = 64 MiB). On a remote device
+the sink must be a `ReadSink` (`SubmitRead` fills the window), and
+`Buffer.MapAsync(ctx, MapModeRead, ...)`, `ReadMapped` and `Unmap` work on top
+of it, one submit per map. On a browser device a `Recorder` is its own host and
+`Submit` waits and maps itself.
+
+**The host side** is package **`batch`** (no GOOS constraint): a `Context`
+holds a guest's private id table over a `Backend` and offers the three
+messages every transport carries, `Create`, `Destroy` and `Stream`. Ids are
+translated before the backend sees anything (a stream can only name objects its
+own context created), a failed message loses the context, and the reads of a
+stream are checked before it runs: a `Reader` backend, a window within the
+quota (`Config.MaxRead`, 1 MiB by default), `MAP_READ` buffers, ranges inside
+the buffers and the window. Under `GOOS=js`, `NewDeviceBackend(device)` is the
+backend on a browser device. go-virtio/gpudev and the go-wasmcontainers host
+module both build on it. Measured read-back round trips on an Apple GPU
+(Chromium, Metal) are in [docs/readback.md](docs/readback.md).
 
 Objects are created remotely the same way. `EncodeDescriptor` turns a
 creation descriptor (buffer, texture, view, sampler, shader module, bind

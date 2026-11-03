@@ -137,8 +137,11 @@ func TestRemoteDevice(t *testing.T) {
 	if m, p := d.Quota().Usage(); m != 0 || p != 0 {
 		t.Errorf("quota after release: %d bytes, %d pipelines", m, p)
 	}
-	if err := buf.MapAsync(context.Background(), MapModeRead, 0, 0); !errors.Is(err, ErrRemoteUnsupported) {
-		t.Error("MapAsync")
+	if err := buf.MapAsync(context.Background(), MapModeWrite, 0, 0); !errors.Is(err, ErrRemoteUnsupported) {
+		t.Error("MapAsync for writing")
+	}
+	if err := buf.MapAsync(context.Background(), MapModeRead, 0, 0); !errors.Is(err, ErrDestroyed) {
+		t.Errorf("MapAsync of a destroyed buffer: %v", err)
 	}
 	if err := d.Queue().WriteTexture(TexelCopyTextureInfo{}, nil, TexelCopyBufferLayout{}, Extent3D{}); !errors.Is(err, ErrRemoteUnsupported) {
 		t.Error("WriteTexture")

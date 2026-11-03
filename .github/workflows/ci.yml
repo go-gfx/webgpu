@@ -65,12 +65,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [FuzzCheckTextureCopy, FuzzTextureBytes, FuzzDecode, FuzzDecodeDescriptor]
+        include:
+          - { target: FuzzCheckTextureCopy, pkg: . }
+          - { target: FuzzTextureBytes, pkg: . }
+          - { target: FuzzDecodeDescriptor, pkg: . }
+          - { target: FuzzDecode, pkg: . }
+          - { target: FuzzDecode, pkg: ./wire }
+          - { target: FuzzRemap, pkg: ./wire }
+          - { target: FuzzStream, pkg: ./batch }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: { go-version: '1.27.3' }
-      - run: go test -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 45s .
+      - run: go test -run '^$' -fuzz '^${{ matrix.target }}$' -fuzztime 45s ${{ matrix.pkg }}
 
   # 32-bit targets: sizes and offsets are uint64 arithmetic that must not
   # depend on int being 64 bits.

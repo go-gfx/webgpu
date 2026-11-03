@@ -33,6 +33,7 @@ func stream() []uint32 {
 		uint32(SetPipeline), 3,
 		uint32(DispatchIndirect), 1, 16, 0,
 		uint32(EndPass),
+		uint32(ReadBuffer), 1, 8, 0, 16, 4,
 		uint32(Submit),
 	}
 }
@@ -53,7 +54,7 @@ func TestDecode(t *testing.T) {
 	}
 	want := []Op{WriteBuffer, CopyBufferToBuffer, CopyTextureToTexture, WriteTexture, BeginRenderPass, SetPipeline, SetBindGroup, SetBindGroup,
 		SetVertexBuffer, SetIndexBuffer, Draw, DrawIndirect, ExecuteBundles, EndPass, BeginComputePass,
-		SetPipeline, DispatchIndirect, EndPass, Submit}
+		SetPipeline, DispatchIndirect, EndPass, ReadBuffer, Submit}
 	if !reflect.DeepEqual(ops, want) || n != len(w) {
 		t.Fatalf("ops %v (%d of %d words)", ops, n, len(w))
 	}
@@ -117,6 +118,14 @@ func TestDecodeRejects(t *testing.T) {
 		{"write texture overflow", []uint32{33, 1, 0, 0, 0, 0, 0, math.MaxUint32, 2, 0, 0, 4, 0, 1, 1, 1}, 4, "past"},
 		{"write texture truncated", []uint32{33, 1, 0, 0}, 4, "truncated"},
 		{"write texture in pass", append(append([]uint32{}, rp...), 33, 1, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 1, 1, 1), 4, "out of place"},
+		{"read unknown", []uint32{34, 9, 0, 0, 4, 0}, 0, "unknown object 9"},
+		{"read offset not 8-aligned", []uint32{34, 1, 4, 0, 4, 0}, 0, "multiple of 8"},
+		{"read size 0", []uint32{34, 1, 0, 0, 0, 0}, 0, "nonzero multiple of 4"},
+		{"read size not 4-aligned", []uint32{34, 1, 0, 0, 6, 0}, 0, "nonzero multiple of 4"},
+		{"read window past the bound", []uint32{34, 1, 0, 0, 8, MaxReadWindow - 4}, 0, "read window"},
+		{"read window overflow", []uint32{34, 1, 0, 0, 8, math.MaxUint32}, 0, "read window"},
+		{"read truncated", []uint32{34, 1, 0}, 0, "truncated"},
+		{"read in pass", append(append([]uint32{}, rp...), 34, 1, 0, 0, 4, 0), 0, "out of place"},
 		{"texture copy in pass", append(append([]uint32{}, rp...), 32, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1), 0, "out of place"},
 	} {
 		_, err := Decode(c.w, c.ndata, known)
@@ -161,12 +170,38 @@ func TestRemap(t *testing.T) {
 	}
 	// ids: write 1, copy 2, texture copy 2, texture write 1, colour 2,
 	// depth 1, pipeline 1, group 1 (the unbind's 0 stays), vertex 1, index
-	// 1, indirect 1, bundles 2, pipeline 1, dispatch 1 = 18.
-	if changed != 18 || len(a) != len(b) {
+	// 1, indirect 1, bundles 2, pipeline 1, dispatch 1, read 1 = 19.
+	if changed != 19 || len(a) != len(b) {
 		t.Fatalf("%d ids changed, %d/%d commands", changed, len(a), len(b))
 	}
 	if seen[0] != 0 {
 		t.Fatal("f was called for a nullable 0")
+	}
+}
+
+// TestRemapReads: the reads of a stream come back in order with their ids
+// translated and every field decoded; a stream without reads has none.
+func TestRemapReads(t *testing.T) {
+	w := []uint32{uint32(ReadBuffer), 2, 8, 1, 16, 0, uint32(ReadBuffer), 1, 0, 0, 4, 16, uint32(Submit)}
+	reads, err := RemapReads(w, 0, func(id uint32) (uint32, bool) { return id + 100, known(id) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Read{{ID: 102, Offset: 8 | 1<<32, Size: 16, WindowOffset: 0}, {ID: 101, Offset: 0, Size: 4, WindowOffset: 16}}
+	if !reflect.DeepEqual(reads, want) {
+		t.Fatalf("reads %+v, want %+v", reads, want)
+	}
+	if reads, err := RemapReads([]uint32{uint32(Submit)}, 0, nil); err != nil || reads != nil {
+		t.Fatalf("no reads: %v %v", reads, err)
+	}
+	if _, err := RemapReads([]uint32{uint32(ReadBuffer), 9, 0, 0, 4, 0}, 0, func(id uint32) (uint32, bool) { return id, known(id) }); err == nil {
+		t.Fatal("an unknown buffer was accepted")
+	}
+	if _, ok := ReadOf(Cmd{Op: Submit}); ok {
+		t.Fatal("ReadOf accepted a Submit")
+	}
+	if _, ok := ReadOf(Cmd{Op: ReadBuffer, Args: []uint32{1}}); ok {
+		t.Fatal("ReadOf accepted a short command")
 	}
 }
 

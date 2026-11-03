@@ -112,8 +112,10 @@ type Recorder struct {
 	dev   *Device
 	words []uint32
 	data  []byte
-	refs  []*object // keeps recorded objects (and so their ids) alive
-	unput []*object // objects Submit must put in replay.js's table first
+	reads []*Readback // ReadBuffer's results, filled by Submit
+	win   uint64      // bytes of read window allocated so far
+	refs  []*object   // keeps recorded objects (and so their ids) alive
+	unput []*object   // objects Submit must put in replay.js's table first
 	err   error
 	pass  int // 0 none, 1 render, 2 compute
 	stage recorderStage
@@ -131,6 +133,8 @@ func (r *Recorder) Reset() {
 	r.refs = r.refs[:0]
 	clear(r.unput)
 	r.unput = r.unput[:0]
+	clear(r.reads)
+	r.reads, r.win = r.reads[:0], 0
 	r.err, r.pass = nil, 0
 }
 
