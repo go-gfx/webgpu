@@ -4,6 +4,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/go-gfx/webgpu"
@@ -40,6 +41,17 @@ func (b *DeviceBackend) Create(kind uint32, desc []byte) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Objects whose creation WebGPU validates asynchronously (WGSL
+	// compilation, layouts, pipelines, bind groups) are made inside a
+	// validation error scope: an invalid one is an error the guest hears of,
+	// not a silent no-op that later work trips over.
+	scoped := false
+	switch d.(type) {
+	case webgpu.ShaderModuleDescriptor, webgpu.BindGroupLayoutDescriptor, webgpu.PipelineLayoutDescriptor,
+		webgpu.BindGroupDescriptor, webgpu.RenderPipelineDescriptor, webgpu.ComputePipelineDescriptor:
+		scoped = true
+		b.dev.PushErrorScope(webgpu.ErrorFilterValidation)
+	}
 	var o any
 	switch d := d.(type) {
 	case webgpu.BufferDescriptor:
@@ -64,6 +76,18 @@ func (b *DeviceBackend) Create(kind uint32, desc []byte) (uint32, error) {
 		o, err = b.dev.CreateComputePipeline(d)
 	default:
 		err = fmt.Errorf("batch: descriptor %T", d)
+	}
+	if scoped {
+		serr := b.dev.PopErrorScope(context.Background())
+		var ge *webgpu.GPUError
+		if errors.As(serr, &ge) {
+			if o != nil && err == nil {
+				b.discard(o)
+			}
+			return 0, fmt.Errorf("%w: %s", ErrInvalid, ge.Message)
+		} else if serr != nil && err == nil {
+			err = serr
+		}
 	}
 	if err != nil {
 		return 0, err
@@ -139,5 +163,15 @@ func (b *DeviceBackend) Objects() []any {
 func (b *DeviceBackend) Close() {
 	for id := range b.objs {
 		b.Destroy(id)
+	}
+}
+
+// discard releases an object that was made but is not kept.
+func (b *DeviceBackend) discard(o any) {
+	switch o := o.(type) {
+	case *webgpu.RenderPipeline:
+		o.Release()
+	case *webgpu.ComputePipeline:
+		o.Release()
 	}
 }

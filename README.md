@@ -201,6 +201,16 @@ Methods that wait on a promise (`RequestAdapter`, `RequestDevice`, `MapAsync`,
 calling goroutine, take a `context.Context`, and must not be called from a
 `js.FuncOf` callback.
 
+## Invalid objects in `batch`
+
+`batch.DeviceBackend.Create` makes shader modules, bind group layouts, pipeline
+layouts, bind groups and pipelines inside a validation error scope. WGSL
+that does not compile (a reserved word, a syntax error) or an object WebGPU
+refuses is an error wrapping `batch.ErrInvalid` whose text is the browser's
+message with the WGSL line and column; without the scope it was a silent
+no-op that later work tripped over. `TestInvalidWGSLOnGPU` runs a reserved
+word, a syntax error and an unknown function, and a valid control.
+
 ## Tests
 
 The descriptor, validation and quota code is platform-neutral and has every

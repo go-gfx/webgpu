@@ -79,6 +79,11 @@ var (
 	// unknown or lacks MAP_READ, a range outside the buffer or the window,
 	// a window or reads above the quota.
 	ErrRead = errors.New("batch: read-back refused")
+
+	// ErrInvalid: the GPU refused an object the guest described: WGSL that
+	// does not compile, a pipeline or bind group that fails WebGPU validation.
+	// The error carries the browser's message (the WGSL line and column).
+	ErrInvalid = errors.New("batch: the GPU refused the object")
 )
 
 type bufInfo struct {
