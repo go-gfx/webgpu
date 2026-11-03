@@ -110,6 +110,10 @@ func New(be Backend, cfg Config) *Context {
 // Lost returns the error that lost the context, or nil.
 func (c *Context) Lost() error { return c.lost }
 
+// Lookup returns the backend's id for guest object id, for a transport that
+// gives an object more than the three messages do (virtio's BIND_RESOURCE).
+func (c *Context) Lookup(id uint32) (uint32, bool) { return c.host(id) }
+
 // Live is the number of guest objects alive.
 func (c *Context) Live() int { return len(c.ids) }
 

@@ -189,8 +189,14 @@ func TestContextMessages(t *testing.T) {
 	if err := c.Create(1, uint32(kind), clone()); err != nil || c.Live() != 1 {
 		t.Fatal(err)
 	}
+	if h, ok := c.Lookup(1); !ok || h == 0 {
+		t.Fatal("Lookup")
+	}
 	if err := c.Destroy(1); err != nil || c.Live() != 0 || len(f.objs) != 0 {
 		t.Fatal(err)
+	}
+	if _, ok := c.Lookup(1); ok {
+		t.Fatal("Lookup after Destroy")
 	}
 	for name, f := range map[string]func(*Context) error{
 		"id in use":    func(c *Context) error { c.Create(1, uint32(kind), clone()); return c.Create(1, uint32(kind), clone()) },
