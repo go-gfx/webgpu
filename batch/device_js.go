@@ -20,6 +20,7 @@ import (
 type DeviceBackend struct {
 	dev  *webgpu.Device
 	objs map[uint32]any // replay id -> handle
+	ls   *loopState     // nil unless SetLoopBudget was called
 }
 
 // NewDeviceBackend returns a backend whose objects live on dev. webgpu's
@@ -41,6 +42,22 @@ func (b *DeviceBackend) Create(kind uint32, desc []byte) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
+	if b.ls != nil {
+		switch d := d.(type) {
+		case webgpu.ShaderModuleDescriptor:
+			return b.createShader(d)
+		case webgpu.PipelineLayoutDescriptor:
+			return b.createLayout(d)
+		case webgpu.ComputePipelineDescriptor:
+			return b.createCompute(d)
+		}
+	}
+	return b.create(d)
+}
+
+// create makes the object a decoded descriptor describes.
+func (b *DeviceBackend) create(d any) (uint32, error) {
+	var err error
 	// Objects whose creation WebGPU validates asynchronously (WGSL
 	// compilation, layouts, pipelines, bind groups) are made inside a
 	// validation error scope: an invalid one is an error the guest hears of,
@@ -122,6 +139,9 @@ func (b *DeviceBackend) Destroy(id uint32) {
 		o.Release()
 	case *webgpu.ComputePipeline:
 		o.Release()
+		if b.ls != nil {
+			delete(b.ls.plan, id)
+		}
 	}
 	delete(b.objs, id)
 }
@@ -136,9 +156,22 @@ func (b *DeviceBackend) Replay(words []uint32, data []byte) error {
 			refs = append(refs, o)
 		}
 	}
+	check := false
+	if b.ls != nil {
+		var err error
+		if words, check, err = b.armed(words, data); err != nil {
+			return err
+		}
+		refs = append(refs, b.hostRefs()...)
+	}
 	seq, err := b.dev.Replay(words, data, refs...)
 	if err != nil {
 		return err
+	}
+	if check {
+		// Mapping the flag's twin completes after the stream's work: it
+		// is the wait, so layer 4 adds no round trip of its own.
+		return b.checkFlag()
 	}
 	return b.dev.WaitSubmitted(context.Background(), seq)
 }
@@ -175,6 +208,7 @@ func (b *DeviceBackend) Close() {
 	for id := range b.objs {
 		b.Destroy(id)
 	}
+	b.closeLoop()
 }
 
 // discard releases an object that was made but is not kept.

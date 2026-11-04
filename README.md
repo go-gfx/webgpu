@@ -150,7 +150,17 @@ for more invocations than the quota; `Context.PeakInvocations` and
 `PeakDispatchInvocations` report the largest stream and the largest dispatch
 seen. An indirect dispatch takes its counts from GPU memory and
 is not counted; a time budget in the host is what bounds it. WebGPU validation
-stays the second line. Under `GOOS=js`, `NewDeviceBackend(device)` is the
+stays the second line. A loop that runs for seconds is not something a dispatch
+count can see, and WebGPU cannot cancel submitted work, so a backend can cut it
+(`DeviceBackend.SetLoopBudget(batch.LoopBudget{...})`, go-gfx/wgsl
+`transform.LoopBudget`): every guest compute shader is rewritten, parse-level
+only (WGSL that does not parse reaches the browser unchanged, which reports its
+own error), so that each loop nest stops at `Work / invocations` iterations
+(a power of 4, at most 2^24, at least 1024) and sets a host flag; a stream whose
+flag is set fails with `batch.ErrTruncated` and its results are not returned.
+The host keeps the last bind group (`maxBindGroups - 1`, 3 by default) for it;
+a guest that uses it is refused with `batch.ErrReserved`. Under `GOOS=js`,
+`NewDeviceBackend(device)` is the
 backend on a browser device. go-virtio/gpudev and the go-wasmcontainers host
 module both build on it. Measured read-back round trips on an Apple GPU
 (Chromium, Metal) are in [docs/readback.md](docs/readback.md).
