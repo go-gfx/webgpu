@@ -101,6 +101,7 @@ type Spec struct {
 	N, Rows   int // input length (a multiple of 32) and output rows
 	Eps       float32
 	Q41       bool // Q4_1 (scale d and minimum m) instead of Q4_0
+	Q80       bool // Q8_0 (32 signed bytes and a scale per block, quants as two vec4<u32> per block)
 	// Norm puts an RMSNorm with weights in front: the scales binding is "aux"
 	// holding the block scales followed, at float NW, by the N weights.
 	Norm  bool
@@ -193,6 +194,23 @@ const blockQ40 = `
         acc = acc + sc * (s4.x + s4.y + s4.z + s4.w);
 `
 
+// Q8_0: 32 signed bytes per block (two vec4<u32>, qs[2*block], qs[2*block+1]),
+// element j is byte j; word k of the block covers elements 4k..4k+3.
+const blockQ80 = `
+        let q0 = qs[(r * NB + gb) * 2u];
+        let q1 = qs[(r * NB + gb) * 2u + 1u];
+        var s4 = i8x4(q0.x) * xs[xb] + i8x4(q0.y) * xs[xb + 1u] + i8x4(q0.z) * xs[xb + 2u] + i8x4(q0.w) * xs[xb + 3u];
+        s4 = s4 + i8x4(q1.x) * xs[xb + 4u] + i8x4(q1.y) * xs[xb + 5u] + i8x4(q1.z) * xs[xb + 6u] + i8x4(q1.w) * xs[xb + 7u];
+        acc = acc + {{SCALE}}[r * NB + gb] * (s4.x + s4.y + s4.z + s4.w);
+`
+
+const fnQ80 = `
+fn i8x4(w: u32) -> vec4<f32> {
+  let v = bitcast<i32>(w);
+  return vec4<f32>(f32(extractBits(v, 0u, 8u)), f32(extractBits(v, 8u, 8u)), f32(extractBits(v, 16u, 8u)), f32(extractBits(v, 24u, 8u)));
+}
+`
+
 // Q4_1: value = d*q + m, so a block's sum is d*sum(q*x) + m*sum(x).
 const blockQ41 = `
         let q = qs[r * NB + gb];
@@ -283,11 +301,15 @@ func Source(s Spec, groups int) (src, access string, gx, gy int) {
 		bind("dd", "array<f32>", false)
 	}
 	block = blockQ40
-	if s.Q41 {
+	h := s.Hooks
+	switch {
+	case s.Q41:
 		bind("mm", "array<f32>", false)
 		block = blockQ41
+	case s.Q80:
+		block = blockQ80
+		h.Func += fnQ80
 	}
-	h := s.Hooks
 	switch {
 	case h.NoInput:
 		load = h.Load
