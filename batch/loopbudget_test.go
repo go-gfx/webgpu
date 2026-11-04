@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/go-gfx/webgpu/wire"
+	"github.com/go-gfx/wgsl"
+	"github.com/go-gfx/wgsl/transform"
 )
 
 var lb = LoopBudget{Work: 1 << 36, Group: 3}
@@ -28,16 +30,33 @@ func TestInstrumentRewritesLoops(t *testing.T) {
 	}
 }
 
-func TestInstrumentLeavesOthersAlone(t *testing.T) {
+func TestInstrumentLeavesLoopFreeAlone(t *testing.T) {
 	for name, src := range map[string]string{
-		"no loop":      `@compute @workgroup_size(1) fn main() {}`,
-		"unparsable":   `@compute fn main( { loop`,
-		"render only":  `@vertex fn v() -> @builtin(position) vec4f { for (var i = 0; i < 3; i++) {} return vec4f(); }`,
-		"vertex+comp.": `@vertex fn v() -> @builtin(position) vec4f { return vec4f(); } @compute @workgroup_size(1) fn c() { loop { break; } }`,
+		"no loop":         `@compute @workgroup_size(1) fn main() {}`,
+		"render, no loop": `@vertex fn v() -> @builtin(position) vec4f { return vec4f(); }`,
+		"loop, no entry":  `fn f() { loop { break; } }`,
 	} {
 		out, ok, err := lb.Instrument(src)
 		if err != nil || ok || out != src {
 			t.Errorf("%s: ok=%v err=%v changed=%v", name, ok, err, out != src)
+		}
+	}
+}
+
+// What cannot be bounded is refused, never passed through.
+func TestInstrumentRefusesWhatItCannotBound(t *testing.T) {
+	for name, c := range map[string]struct {
+		src  string
+		want error
+	}{
+		"unparsable":     {`@compute fn main( { loop`, ErrUnparsable},
+		"vertex loop":    {`@vertex fn v() -> @builtin(position) vec4f { for (var i = 0; i < 3; i++) {} return vec4f(); }`, ErrUnbounded},
+		"fragment loop":  {`@fragment fn f() -> @location(0) vec4f { while (true) { break; } return vec4f(); }`, ErrUnbounded},
+		"vertex+compute": {`@vertex fn v() -> @builtin(position) vec4f { return vec4f(); } @compute @workgroup_size(1) fn c() { loop { break; } }`, ErrUnbounded},
+	} {
+		out, ok, err := lb.Instrument(c.src)
+		if !errors.Is(err, c.want) || ok || out != "" {
+			t.Errorf("%s: out=%q ok=%v err=%v", name, out, ok, err)
 		}
 	}
 }
@@ -182,5 +201,17 @@ func TestInject(t *testing.T) {
 	bad := []uint32{uint32(wire.BeginComputePass), uint32(wire.SetBindGroup), 3, 70, 0, uint32(wire.EndPass)}
 	if _, _, err := l.inject(bad, 0, plan, nil); !errors.Is(err, ErrReserved) {
 		t.Errorf("reserved index: %v", err)
+	}
+}
+
+// A rewrite that fails is a module the host cannot bound.
+func TestInstrumentRewriteFailure(t *testing.T) {
+	old := rewrite
+	defer func() { rewrite = old }()
+	rewrite = func(*wgsl.Module, transform.Config) (*wgsl.Module, *transform.Report, error) {
+		return nil, nil, errors.New("boom")
+	}
+	if _, _, err := lb.Instrument(loopy); !errors.Is(err, ErrUnbounded) {
+		t.Errorf("err %v", err)
 	}
 }

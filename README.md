@@ -154,12 +154,18 @@ stays the second line. A loop that runs for seconds is not something a dispatch
 count can see, and WebGPU cannot cancel submitted work, so a backend can cut it
 (`DeviceBackend.SetLoopBudget(batch.LoopBudget{...})`, go-gfx/wgsl
 `transform.LoopBudget`): every guest compute shader is rewritten, parse-level
-only (WGSL that does not parse reaches the browser unchanged, which reports its
-own error), so that each loop nest stops at `Work / invocations` iterations
+only, so that each loop nest stops at `Work / invocations` iterations
 (a power of 4, at most 2^24, at least 1024) and sets a host flag; a stream whose
 flag is set fails with `batch.ErrTruncated` and its results are not returned.
-The host keeps the last bind group (`maxBindGroups - 1`, 3 by default) for it;
-a guest that uses it is refused with `batch.ErrReserved`. Under `GOOS=js`,
+Nothing unbounded runs: a module the host cannot bound (WGSL its parser does not
+accept, a loop in a module with a vertex or fragment entry point, a rewrite the
+browser refuses) is refused with `batch.ErrUnbounded`, after the browser has
+given its own verdict on the guest's text (an invalid module is reported as the
+browser reports it). The host keeps the last bind group (`maxBindGroups - 1`, 3
+by default) for it; a guest that uses it is refused with `batch.ErrReserved`.
+`batch.Guard` is the same machinery for hosts that call the objects API
+(`Shader`, `ShaderNoWait`, `Pipeline`, `Pass`, `Finish`, `Submit`,
+`SubmitNoWait`): the wasi:webgpu host module and wasi-nn use it. Under `GOOS=js`,
 `NewDeviceBackend(device)` is the
 backend on a browser device. go-virtio/gpudev and the go-wasmcontainers host
 module both build on it. Measured read-back round trips on an Apple GPU
