@@ -46,7 +46,12 @@ type LoopBudget struct {
 	// would give a one-workgroup dispatch billions of iterations, and a loop
 	// that serial takes seconds, since an invocation's iterations are not
 	// parallel (the first Firefox run of the hostile test found this).
-	MaxIterations        uint32
+	MaxIterations uint32
+	// SmallLoop is the largest constant trip count of a leaf loop that is
+	// counted in one addition instead of checked per iteration (default 0: off;
+	// transform.Config.SmallLoop). The bound stays exact; measured on the LLM
+	// decode it gained nothing (531 against 534 tok/s), so it is off.
+	SmallLoop            uint32
 	WorkgroupInvocations uint32 // invocations one workgroup counts as (default 256)
 	IndirectInvocations  uint64 // a DispatchIndirect counts as this many (default 2^26)
 	Group                uint32 // the reserved bind group
@@ -182,7 +187,7 @@ func (lb LoopBudget) Analyze(code string) (Analysis, error) {
 	}
 	out, rep, err := rewrite(m, transform.Config{
 		Budget:    transform.BudgetSource{Group: int(lb.Group), Binding: 1},
-		FlagGroup: int(lb.Group), FlagBinding: 0,
+		FlagGroup: int(lb.Group), FlagBinding: 0, SmallLoop: lb.SmallLoop,
 	})
 	if err != nil {
 		return Analysis{}, fmt.Errorf("%w: %v", ErrUnbounded, err)

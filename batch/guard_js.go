@@ -650,3 +650,16 @@ func (g *Guard) armedStream(words []uint32, data []byte) ([]uint32, bool, error)
 
 // hostRefs are the objects a rewritten stream names besides the guest's.
 func (g *Guard) hostRefs() []any { return []any{g.flagBG, g.emptyBG, g.flag, g.read} }
+
+// RequiredLimits is what a device that uses a Guard should require of its
+// adapter: one more storage buffer per shader stage than WebGPU's default,
+// which is the flag's binding, so that a guest shader that already binds the
+// default 8 can still be rewritten. nil if the adapter offers no more than
+// the default (such a shader is then refused as unboundable). A Quota that
+// admits the limit needs the same map in Quota.Limits.
+func RequiredLimits(ad *webgpu.Adapter) map[string]uint64 {
+	if v, ok := ad.Limit("maxStorageBuffersPerShaderStage"); !ok || v <= 8 {
+		return nil
+	}
+	return map[string]uint64{"maxStorageBuffersPerShaderStage": 9}
+}

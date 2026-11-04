@@ -50,7 +50,7 @@ func TestInstrumentRefusesWhatItCannotBound(t *testing.T) {
 		want error
 	}{
 		"unparsable":     {`@compute fn main( { loop`, ErrUnparsable},
-		"vertex loop":    {`@vertex fn v() -> @builtin(position) vec4f { for (var i = 0; i < 3; i++) {} return vec4f(); }`, ErrUnbounded},
+		"vertex loop":    {`@vertex fn v(@builtin(vertex_index) n: u32) -> @builtin(position) vec4f { for (var i = 0u; i < n; i++) {} return vec4f(); }`, ErrUnbounded},
 		"fragment loop":  {`@fragment fn f() -> @location(0) vec4f { while (true) { break; } return vec4f(); }`, ErrUnbounded},
 		"vertex+compute": {`@vertex fn v() -> @builtin(position) vec4f { return vec4f(); } @compute @workgroup_size(1) fn c() { loop { break; } }`, ErrUnbounded},
 	} {
