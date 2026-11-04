@@ -168,13 +168,12 @@ func (b *DeviceBackend) Replay(words []uint32, data []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := b.dev.WaitSubmitted(context.Background(), seq); err != nil {
-		return err
-	}
 	if check {
+		// Mapping the flag's twin completes after the stream's work: it
+		// is the wait, so layer 4 adds no round trip of its own.
 		return b.checkFlag()
 	}
-	return nil
+	return b.dev.WaitSubmitted(context.Background(), seq)
 }
 
 // Read implements Reader: GPUBuffer.mapAsync(READ), getMappedRange, copy,

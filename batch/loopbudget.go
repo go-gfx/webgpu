@@ -39,8 +39,13 @@ import (
 // more are refused with ErrReserved. Group is normally the device's
 // maxBindGroups-1 (3 by default).
 type LoopBudget struct {
-	Work                 uint64 // invocation-iterations per dispatch (> 0)
-	MinIterations        uint32 // the smallest B (default 1024)
+	Work          uint64 // invocation-iterations per dispatch (> 0)
+	MinIterations uint32 // the smallest B (default 1024)
+	// MaxIterations is the largest B (default 2^24): Work/invocations alone
+	// would give a one-workgroup dispatch billions of iterations, and a loop
+	// that serial takes seconds, since an invocation's iterations are not
+	// parallel (the first Firefox run of the hostile test found this).
+	MaxIterations        uint32
 	WorkgroupInvocations uint32 // invocations one workgroup counts as (default 256)
 	IndirectInvocations  uint64 // a DispatchIndirect counts as this many (default 2^26)
 	Group                uint32 // the reserved bind group
@@ -75,6 +80,9 @@ func (lb LoopBudget) withDefaults() LoopBudget {
 	if lb.MinIterations == 0 {
 		lb.MinIterations = 1024
 	}
+	if lb.MaxIterations == 0 {
+		lb.MaxIterations = 1 << 24
+	}
 	if lb.WorkgroupInvocations == 0 {
 		lb.WorkgroupInvocations = 256
 	}
@@ -96,7 +104,7 @@ func (lb LoopBudget) Iterations(inv uint64) uint32 {
 
 // slot is the index of the budget value of a dispatch of inv invocations.
 func (lb LoopBudget) slot(inv uint64) uint32 {
-	b := uint64(math.MaxUint32)
+	b := uint64(lb.MaxIterations)
 	if inv > 0 {
 		b = min(b, lb.Work/inv)
 	}
@@ -104,7 +112,7 @@ func (lb LoopBudget) slot(inv uint64) uint32 {
 	if b >= math.MaxUint32 {
 		return 32
 	}
-	return uint32(bits.Len64(b) - 1)
+	return uint32(bits.Len64(b)-1) &^ 1 // a power of 4: fewer distinct budgets, fewer SetBindGroups
 }
 
 // Instrument returns the module text to hand to the browser, and whether it
@@ -184,7 +192,7 @@ type pipePlan struct {
 // group before each of its dispatches. It refuses a SetBindGroup of index
 // Group or more. The words come back unchanged (the same slice, false) when
 // nothing is added.
-func (lb LoopBudget) inject(words []uint32, ndata uint32, plan map[uint32]*pipePlan) ([]uint32, bool, error) {
+func (lb LoopBudget) inject(words []uint32, ndata uint32, plan map[uint32]*pipePlan, tail []uint32) ([]uint32, bool, error) {
 	cmds, err := wire.Decode(words, ndata, func(uint32) bool { return true })
 	if err != nil {
 		return nil, false, err
@@ -203,23 +211,48 @@ func (lb LoopBudget) inject(words []uint32, ndata uint32, plan map[uint32]*pipeP
 		}
 		emitted = upTo
 	}
-	setFlag := func(slot uint32) {
-		out = append(out, uint32(wire.SetBindGroup), lb.Group, cur.flag, 1, slot*budgetStride)
+	// bound is what each group index holds in the current pass (the guest's
+	// and the host's sets): a set that would change nothing is not emitted.
+	// WebGPU keeps a set group across SetPipeline, so the empty groups of
+	// a padded layout are set once per pass, the flag group once per budget.
+	type held struct{ id, off uint32 }
+	bound := map[uint32]held{}
+	set := func(index, id, off uint32, dynamic bool) {
+		h := held{id, 0}
+		if dynamic {
+			h.off = off + 1
+		}
+		if bound[index] == h {
+			return
+		}
+		bound[index] = h
+		if dynamic {
+			out = append(out, uint32(wire.SetBindGroup), index, id, 1, off)
+		} else {
+			out = append(out, uint32(wire.SetBindGroup), index, id, 0)
+		}
 	}
+	setFlag := func(slot uint32) { set(lb.Group, cur.flag, slot*budgetStride, true) }
 	for i, c := range cmds {
 		switch c.Op {
 		case wire.BeginComputePass, wire.EndPass, wire.BeginRenderPass:
 			cur = nil
+			clear(bound)
 		case wire.SetBindGroup:
 			if c.Args[0] >= lb.Group {
 				return nil, false, fmt.Errorf("%w: SetBindGroup index %d", ErrReserved, c.Args[0])
+			}
+			if c.Args[1] == 0 {
+				delete(bound, c.Args[0])
+			} else {
+				bound[c.Args[0]] = held{c.Args[1], math.MaxUint32} // the guest's: never equal to a host set
 			}
 		case wire.SetPipeline:
 			cur = plan[c.Args[0]]
 			if cur != nil {
 				flush(i + 1)
 				for _, b := range cur.empties {
-					out = append(out, uint32(wire.SetBindGroup), b.index, b.id, 0)
+					set(b.index, b.id, 0, false)
 				}
 			}
 		case wire.Dispatch:
@@ -237,6 +270,16 @@ func (lb LoopBudget) inject(words []uint32, ndata uint32, plan map[uint32]*pipeP
 	if out == nil {
 		return words, false, nil
 	}
-	flush(len(cmds))
+	// The tail (the flag's copy) goes before the final Submit, which is what
+	// submits the encoder: replay.js submits only at a Submit command.
+	if n := len(cmds); n > 0 && cmds[n-1].Op == wire.Submit {
+		flush(n - 1)
+		out = append(out, tail...)
+		flush(n)
+	} else {
+		flush(n)
+		out = append(out, tail...)
+		out = append(out, uint32(wire.Submit))
+	}
 	return out, true, nil
 }

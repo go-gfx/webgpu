@@ -2,7 +2,6 @@ package batch
 
 import (
 	"errors"
-	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -61,13 +60,13 @@ func TestIterations(t *testing.T) {
 		inv  uint64
 		want uint32
 	}{
-		{1, math.MaxUint32},      // tiny dispatch: the largest
-		{1 << 4, math.MaxUint32}, // 2^32 > u32
-		{1 << 5, 1 << 31},
+		{1, 1 << 24},      // tiny dispatch: the largest
+		{1 << 4, 1 << 24}, // 2^32 > the cap
+		{1 << 5, 1 << 24},
 		{1 << 26, 1 << 10}, // the dispatch quota: the floor
 		{1 << 30, 1 << 10}, // below the floor: the floor
 		{3 << 20, 1 << 14}, // 2^36/3M = 21845 -> 16384
-		{0, math.MaxUint32},
+		{0, 1 << 24},
 	} {
 		if got := l.Iterations(c.inv); got != c.want {
 			t.Errorf("%d invocations: %d, want %d", c.inv, got, c.want)
@@ -89,7 +88,7 @@ func TestInject(t *testing.T) {
 		uint32(wire.Dispatch), 1, 1, 1,
 		uint32(wire.EndPass),
 	}
-	got, inj, err := l.inject(slices.Clone(w), 0, plan)
+	got, inj, err := l.inject(slices.Clone(w), 0, plan, nil)
 	if err != nil || !inj {
 		t.Fatal(inj, err)
 	}
@@ -106,16 +105,53 @@ func TestInject(t *testing.T) {
 		uint32(wire.SetPipeline), other,
 		uint32(wire.Dispatch), 1, 1, 1,
 		uint32(wire.EndPass),
+		uint32(wire.Submit),
 	}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %v\nwant %v", got, want)
 	}
-	same, inj, err := l.inject(w, 0, map[uint32]*pipePlan{99: {flag: 1}})
+	// Repeats are not set again: the same pipeline and size twice.
+	rep := []uint32{
+		uint32(wire.BeginComputePass),
+		uint32(wire.SetPipeline), pipe,
+		uint32(wire.Dispatch), 1024, 1, 1,
+		uint32(wire.SetPipeline), pipe,
+		uint32(wire.Dispatch), 1024, 1, 1,
+		uint32(wire.EndPass),
+	}
+	wantRep := []uint32{
+		uint32(wire.BeginComputePass),
+		uint32(wire.SetPipeline), pipe,
+		uint32(wire.SetBindGroup), 1, 90, 0,
+		uint32(wire.SetBindGroup), 2, 92, 0,
+		uint32(wire.SetBindGroup), 3, 91, 1, 20 * budgetStride,
+		uint32(wire.Dispatch), 1024, 1, 1,
+		uint32(wire.SetPipeline), pipe,
+		uint32(wire.Dispatch), 1024, 1, 1,
+		uint32(wire.EndPass),
+		uint32(wire.Submit),
+	}
+	if g2, _, err := l.inject(rep, 0, plan, nil); err != nil || !slices.Equal(g2, wantRep) {
+		t.Errorf("repeat: got %v (%v)\nwant %v", g2, err, wantRep)
+	}
+	// The tail goes before a final Submit, not after it.
+	withSubmit := []uint32{
+		uint32(wire.BeginComputePass),
+		uint32(wire.SetPipeline), pipe,
+		uint32(wire.Dispatch), 1024, 1, 1,
+		uint32(wire.EndPass),
+		uint32(wire.Submit),
+	}
+	g3, _, err := l.inject(withSubmit, 0, plan, []uint32{777, 888})
+	if err != nil || g3[len(g3)-1] != uint32(wire.Submit) || g3[len(g3)-3] != 777 || g3[len(g3)-2] != 888 {
+		t.Errorf("tail: %v (%v)", g3, err)
+	}
+	same, inj, err := l.inject(w, 0, map[uint32]*pipePlan{99: {flag: 1}}, nil)
 	if err != nil || inj || &same[0] != &w[0] {
 		t.Errorf("unchanged expected: %v", err)
 	}
 	bad := []uint32{uint32(wire.BeginComputePass), uint32(wire.SetBindGroup), 3, 70, 0, uint32(wire.EndPass)}
-	if _, _, err := l.inject(bad, 0, plan); !errors.Is(err, ErrReserved) {
+	if _, _, err := l.inject(bad, 0, plan, nil); !errors.Is(err, ErrReserved) {
 		t.Errorf("reserved index: %v", err)
 	}
 }

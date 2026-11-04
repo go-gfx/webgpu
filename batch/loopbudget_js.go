@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/go-gfx/webgpu"
+	"github.com/go-gfx/webgpu/wire"
 )
 
 // loopState is a DeviceBackend's loop-budget machinery (see LoopBudget).
@@ -26,6 +28,8 @@ type loopState struct {
 	plan    map[uint32]*pipePlan                                 // compute pipeline replay id -> groups to set
 	// Counters, for the host's report.
 	instrumented, fallbacks int
+	modules                 int           // modules seen (instrumented or not)
+	spent                   time.Duration // time in LoopBudget.Instrument (parse, rewrite, print)
 }
 
 // SetLoopBudget turns the loop budget on for the objects this backend
@@ -80,14 +84,15 @@ func (b *DeviceBackend) SetLoopBudget(lb LoopBudget) error {
 	return nil
 }
 
-// LoopBudgetStats reports how many shader modules were rewritten, and how
-// many the browser refused after the rewrite and which were therefore kept
-// as the guest wrote them (bounded by the host's time budget only).
-func (b *DeviceBackend) LoopBudgetStats() (instrumented, fallbacks int) {
+// LoopBudgetStats reports how many shader modules were seen, how many were
+// rewritten, how many the browser refused after the rewrite (they were kept
+// as the guest wrote them, bounded by the host's time budget only), and the
+// time spent parsing, rewriting and printing them.
+func (b *DeviceBackend) LoopBudgetStats() (modules, instrumented, fallbacks int, spent time.Duration) {
 	if b.ls == nil {
-		return 0, 0
+		return 0, 0, 0, 0
 	}
-	return b.ls.instrumented, b.ls.fallbacks
+	return b.ls.modules, b.ls.instrumented, b.ls.fallbacks, b.ls.spent
 }
 
 // createShader makes a guest's shader module, rewritten when the loop budget
@@ -96,7 +101,10 @@ func (b *DeviceBackend) LoopBudgetStats() (instrumented, fallbacks int) {
 // shader); if it refuses both, the error is the original's, so its line and
 // column are the guest's own.
 func (b *DeviceBackend) createShader(d webgpu.ShaderModuleDescriptor) (uint32, error) {
+	t0 := time.Now()
 	code, inst, err := b.ls.lb.Instrument(d.Code)
+	b.ls.spent += time.Since(t0)
+	b.ls.modules++
 	if err != nil {
 		return 0, err
 	}
@@ -186,7 +194,17 @@ func (b *DeviceBackend) createCompute(d webgpu.ComputePipelineDescriptor) (uint3
 // SetPipeline of an instrumented pipeline. If it set any, the flag is cleared
 // first and the stream must be checked with checkFlag after it ran.
 func (b *DeviceBackend) armed(words []uint32, data []byte) ([]uint32, bool, error) {
-	words, inj, err := b.ls.lb.inject(words, uint32(len(data)), b.ls.plan)
+	// The flag's copy to its MAP_READ twin rides the stream's own submit.
+	fid, err := webgpu.ReplayID(b.ls.flag)
+	if err != nil {
+		return nil, false, err
+	}
+	rid, err := webgpu.ReplayID(b.ls.read)
+	if err != nil {
+		return nil, false, err
+	}
+	copyFlag := []uint32{uint32(wire.CopyBufferToBuffer), fid, 0, 0, rid, 0, 0, 4, 0}
+	words, inj, err := b.ls.lb.inject(words, uint32(len(data)), b.ls.plan, copyFlag)
 	if err != nil || !inj {
 		return words, false, err
 	}
@@ -197,26 +215,12 @@ func (b *DeviceBackend) armed(words []uint32, data []byte) ([]uint32, bool, erro
 // checkFlag reads the flag after a stream: ErrTruncated if a loop was cut.
 func (b *DeviceBackend) checkFlag() error {
 	s := b.ls
-	enc, err := b.dev.CreateCommandEncoder("loop budget flag")
-	if err != nil {
-		return err
-	}
-	if err := enc.CopyBufferToBuffer(s.flag, 0, s.read, 0, 4); err != nil {
-		return err
-	}
-	cb, err := enc.Finish()
-	if err != nil {
-		return err
-	}
-	if err := b.dev.Queue().Submit(cb); err != nil {
-		return err
-	}
 	ctx := context.Background()
-	if err := s.read.MapAsync(ctx, webgpu.MapModeRead, 0, 4); err != nil {
+	if err := s.read.MapAsync(ctx, webgpu.MapModeRead, 0, 4); err != nil { // after the stream's work
 		return err
 	}
 	var v [4]byte
-	err = s.read.ReadMapped(0, v[:])
+	err := s.read.ReadMapped(0, v[:])
 	if uerr := s.read.Unmap(); err == nil {
 		err = uerr
 	}
@@ -234,7 +238,7 @@ func (b *DeviceBackend) hostRefs() []any {
 	if b.ls == nil {
 		return nil
 	}
-	return []any{b.ls.flagBG, b.ls.emptyBG}
+	return []any{b.ls.flagBG, b.ls.emptyBG, b.ls.flag, b.ls.read}
 }
 
 func (b *DeviceBackend) closeLoop() {
