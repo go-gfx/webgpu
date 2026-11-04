@@ -186,6 +186,14 @@ of a GPU.
 
 - `atlas.Shelf` (package `atlas`, no GOOS constraint): a shelf packer that
   places many small images (textures, lightmaps, glyphs) in one texture.
+- `kernels/q4` (no GOOS constraint): WGSL generator for a Q4_0 / Q4_1
+  matrix-vector product, f32, no subgroups or f16, sizes from the adapter's
+  limits; the z axis batches vectors (tokens); fused RMSNorm, residual add and
+  custom prologues and epilogues through `Hooks`. `kernels/argmax`: two-stage
+  greedy sampler (lowest index on ties). Used by
+  [go-wasmcontainers/llm](https://github.com/go-wasmcontainers/llm) v0.3.1
+  (580 tok/s decoding SmolLM2-135M in Chromium against 514 for llama.cpp on
+  one CPU core).
 - `Device.ReadTexture(ctx, src, width, height, bytesPerTexel)`: copies a
   region of a texture to Go memory, rows unpadded (the copy to a buffer wants
   rows padded to 256 bytes). For tests and screenshots, not a frame loop.
