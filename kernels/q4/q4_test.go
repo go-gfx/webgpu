@@ -17,10 +17,12 @@ func specs() map[string]Spec {
 	acc.Mode = Acc
 	big := base
 	big.N, big.MaxShared = 8192, 8192 // tiled
+	q80 := base
+	q80.Q80 = true
 	custom := base
 	custom.Mode = Custom
 	custom.Hooks = Hooks{NoInput: true, Load: "vec4<f32>(0.0)", RowMap: RowPlain, Epi: EpiStore, Bindings: []Binding{{"y", "array<f32>", true}}}
-	return map[string]Spec{"store": base, "norm": norm, "q41acc": q41, "acc": acc, "tiled": big, "custom": custom}
+	return map[string]Spec{"store": base, "norm": norm, "q41acc": q41, "acc": acc, "tiled": big, "q80": q80, "custom": custom}
 }
 
 // Every placeholder is substituted and the WGSL parses, at the workgroup
