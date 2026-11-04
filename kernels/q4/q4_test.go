@@ -74,3 +74,12 @@ func TestGrid2D(t *testing.T) {
 		t.Fatalf("grid %dx%d, want 100x3", gx, gy)
 	}
 }
+
+// With workgroup memory below one block the tile is one block (the caller's
+// limits then make the kernel invalid on the device, never out of range here).
+func TestTileMinimum(t *testing.T) {
+	s := Spec{WG: 64, TPR: 8, MaxShared: 512, N: 1024, Rows: 8}
+	if t4, nt, tb := s.Tile(); t4 != 8 || tb != 1 || nt != 32 {
+		t.Fatalf("tile %d vec4, %d tiles of %d blocks", t4, nt, tb)
+	}
+}
