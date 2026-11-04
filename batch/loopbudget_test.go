@@ -74,6 +74,35 @@ func TestIterations(t *testing.T) {
 	}
 }
 
+func TestSmallPieces(t *testing.T) {
+	if (LoopBudget{}).Validate() == nil || (LoopBudget{Work: 1}).Validate() != nil {
+		t.Error("Validate")
+	}
+	// A cap of the whole uint32 range is the last budget slot.
+	l := LoopBudget{Work: 1 << 62, MaxIterations: 1<<32 - 1}.withDefaults()
+	if got := l.Iterations(1); got != 1<<32-1 || l.slot(1) != 32 {
+		t.Errorf("last slot: %d, slot %d", got, l.slot(1))
+	}
+	if litValue("abc") != -1 || litValue("3u") != 3 || litValue("0x10") != 16 {
+		t.Error("litValue")
+	}
+	if _, _, err := lb.inject([]uint32{9999}, 0, nil, nil); err == nil {
+		t.Error("a bad opcode was accepted")
+	}
+	// An unbind (id 0) is tracked, so the host's set after it is emitted.
+	plan := map[uint32]*pipePlan{5: {empties: []binding{{1, 90}}, flag: 91}}
+	w := []uint32{
+		uint32(wire.BeginComputePass),
+		uint32(wire.SetPipeline), 5,
+		uint32(wire.SetBindGroup), 1, 0, 0,
+		uint32(wire.Dispatch), 1, 1, 1,
+		uint32(wire.EndPass),
+	}
+	if got, inj, err := (LoopBudget{Work: 1 << 36, Group: 3}).inject(w, 0, plan, nil); err != nil || !inj || len(got) <= len(w) {
+		t.Errorf("unbind: %v %v %v", got, inj, err)
+	}
+}
+
 func TestInject(t *testing.T) {
 	const pipe, other = 5, 6
 	l := LoopBudget{Work: 1 << 36, Group: 3, WorkgroupInvocations: 64}
