@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -45,7 +46,12 @@ type LoopBudget struct {
 	// would give a one-workgroup dispatch billions of iterations, and a loop
 	// that serial takes seconds, since an invocation's iterations are not
 	// parallel (the first Firefox run of the hostile test found this).
-	MaxIterations        uint32
+	MaxIterations uint32
+	// SmallLoop is the largest constant trip count of a leaf loop that is
+	// counted in one addition instead of checked per iteration (default 0: off;
+	// transform.Config.SmallLoop). The bound stays exact; measured on the LLM
+	// decode it gained nothing (531 against 534 tok/s), so it is off.
+	SmallLoop            uint32
 	WorkgroupInvocations uint32 // invocations one workgroup counts as (default 256)
 	IndirectInvocations  uint64 // a DispatchIndirect counts as this many (default 2^26)
 	Group                uint32 // the reserved bind group
@@ -56,6 +62,14 @@ var (
 	// ErrReserved: the guest used the bind group the host reserved for its
 	// loop-budget flag.
 	ErrReserved = errors.New("batch: the guest uses the bind group reserved by the host")
+	// ErrUnparsable: the host's WGSL parser does not accept the module, so
+	// the host cannot bound it.
+	ErrUnparsable = errors.New("batch: the host cannot parse the WGSL, so it cannot bound its loops")
+	// ErrUnbounded: the host cannot make the module's loops bounded: it does
+	// not parse (when the browser accepts it), it has a loop in a vertex or
+	// fragment entry point's module, or the browser refused the rewrite of a
+	// module it accepts. An unbounded module is never run.
+	ErrUnbounded = errors.New("batch: the host cannot bound the WGSL's loops; module refused")
 	// ErrTruncated: at least one shader invocation hit the loop budget and
 	// was cut; the stream's results are partial and are not returned.
 	ErrTruncated = errors.New("batch: a shader exceeded its loop budget and was truncated")
@@ -116,18 +130,36 @@ func (lb LoopBudget) slot(inv uint64) uint32 {
 }
 
 // Instrument returns the module text to hand to the browser, and whether it
-// was rewritten. It parses only: a module that does not parse is returned
-// unchanged and un-instrumented (the browser stays the validation
-// authority and reports its own error), as is a module without a compute
-// entry point or one that also has a vertex entry (a vertex stage cannot
-// write storage). A module that declares a binding in the reserved group is
-// refused with ErrReserved.
+// was rewritten. It parses only (never Validate). A module with no loop is
+// returned unchanged: it is bounded already. A module with a loop and only
+// compute entry points is rewritten. It is refused, never passed through, when
+// it cannot be bounded: ErrUnparsable (the host's parser does not accept it),
+// ErrUnbounded (a loop in a module that has a vertex or fragment entry point,
+// whose stages cannot take the storage flag; or the transform failed), and
+// ErrReserved (a binding in the reserved group). The caller decides what the
+// browser says first: an invalid module is reported as the browser reports it.
 func (lb LoopBudget) Instrument(code string) (string, bool, error) {
+	r, err := lb.Analyze(code)
+	return r.Text, r.Rewritten, err
+}
+
+// Analysis is what Analyze found: the text to compile, whether it was
+// rewritten, and the bind groups the module declares (@group of a
+// module-scope variable), sorted.
+type Analysis struct {
+	Text      string
+	Rewritten bool
+	Groups    []uint32
+}
+
+// Analyze is Instrument with the module's declared groups.
+func (lb LoopBudget) Analyze(code string) (Analysis, error) {
 	m, err := wgsl.Parse(code)
 	if err != nil {
-		return code, false, nil
+		return Analysis{}, fmt.Errorf("%w: %v", ErrUnparsable, err)
 	}
-	var compute, vertex bool
+	var compute, render bool
+	var groups []uint32
 	for _, d := range m.Decls {
 		switch d := d.(type) {
 		case *wgsl.Func:
@@ -135,32 +167,42 @@ func (lb LoopBudget) Instrument(code string) (string, bool, error) {
 				switch a.Name {
 				case "compute":
 					compute = true
-				case "vertex":
-					vertex = true
+				case "vertex", "fragment":
+					render = true
 				}
 			}
 		case *wgsl.Var:
 			for _, a := range d.Attrs {
 				if a.Name == "group" && len(a.Args) == 1 {
-					if lit, ok := a.Args[0].(*wgsl.IntLit); ok && litValue(lit.Text) == int64(lb.Group) {
-						return "", false, fmt.Errorf("%w: @group(%d) in a WGSL module", ErrReserved, lb.Group)
+					if lit, ok := a.Args[0].(*wgsl.IntLit); ok {
+						if v := litValue(lit.Text); v == int64(lb.Group) {
+							return Analysis{}, fmt.Errorf("%w: @group(%d) in a WGSL module", ErrReserved, lb.Group)
+						} else if v >= 0 && !slices.Contains(groups, uint32(v)) {
+							groups = append(groups, uint32(v))
+						}
 					}
 				}
 			}
 		}
 	}
-	if !compute || vertex {
-		return code, false, nil
-	}
-	out, rep, err := transform.LoopBudget(m, transform.Config{
+	out, rep, err := rewrite(m, transform.Config{
 		Budget:    transform.BudgetSource{Group: int(lb.Group), Binding: 1},
-		FlagGroup: int(lb.Group), FlagBinding: 0,
+		FlagGroup: int(lb.Group), FlagBinding: 0, SmallLoop: lb.SmallLoop,
 	})
-	if err != nil || !rep.Instrumented {
-		return code, false, nil
+	if err != nil {
+		return Analysis{}, fmt.Errorf("%w: %v", ErrUnbounded, err)
 	}
-	return wgsl.Print(out), true, nil
+	if !rep.Instrumented || !compute && !render { // no loop; or loops no entry point can run
+		return Analysis{Text: code, Groups: groups}, nil
+	}
+	if render {
+		return Analysis{}, fmt.Errorf("%w: a loop in a module with a vertex or fragment entry point", ErrUnbounded)
+	}
+	return Analysis{Text: wgsl.Print(out), Rewritten: true, Groups: groups}, nil
 }
+
+// rewrite is transform.LoopBudget (a variable so that a test can make it fail).
+var rewrite = transform.LoopBudget
 
 // litValue is the value of an integer literal's text ("3", "3u", "0x3"), -1
 // if it is not one.

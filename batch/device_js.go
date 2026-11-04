@@ -20,7 +20,7 @@ import (
 type DeviceBackend struct {
 	dev  *webgpu.Device
 	objs map[uint32]any // replay id -> handle
-	ls   *loopState     // nil unless SetLoopBudget was called
+	g    *Guard         // nil unless SetLoopBudget was called
 }
 
 // NewDeviceBackend returns a backend whose objects live on dev. webgpu's
@@ -42,7 +42,7 @@ func (b *DeviceBackend) Create(kind uint32, desc []byte) (uint32, error) {
 	if err != nil {
 		return 0, err
 	}
-	if b.ls != nil {
+	if b.g != nil {
 		switch d := d.(type) {
 		case webgpu.ShaderModuleDescriptor:
 			return b.createShader(d)
@@ -139,8 +139,10 @@ func (b *DeviceBackend) Destroy(id uint32) {
 		o.Release()
 	case *webgpu.ComputePipeline:
 		o.Release()
-		if b.ls != nil {
-			delete(b.ls.plan, id)
+		if b.g != nil {
+			b.g.mu.Lock()
+			delete(b.g.plan, id)
+			b.g.mu.Unlock()
 		}
 	}
 	delete(b.objs, id)
@@ -157,12 +159,12 @@ func (b *DeviceBackend) Replay(words []uint32, data []byte) error {
 		}
 	}
 	check := false
-	if b.ls != nil {
+	if b.g != nil {
 		var err error
-		if words, check, err = b.armed(words, data); err != nil {
+		if words, check, err = b.g.armedStream(words, data); err != nil {
 			return err
 		}
-		refs = append(refs, b.hostRefs()...)
+		refs = append(refs, b.g.hostRefs()...)
 	}
 	seq, err := b.dev.Replay(words, data, refs...)
 	if err != nil {
@@ -171,7 +173,7 @@ func (b *DeviceBackend) Replay(words []uint32, data []byte) error {
 	if check {
 		// Mapping the flag's twin completes after the stream's work: it
 		// is the wait, so layer 4 adds no round trip of its own.
-		return b.checkFlag()
+		return b.g.checkFlag()
 	}
 	return b.dev.WaitSubmitted(context.Background(), seq)
 }
