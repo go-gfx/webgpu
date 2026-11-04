@@ -79,7 +79,7 @@ func (q *Queue) OnSubmittedWorkDone(ctx context.Context) error {
 	if err := try("onSubmittedWorkDone", func() { p = q.v.Call("onSubmittedWorkDone") }); err != nil {
 		return err
 	}
-	if _, err := await(ctx, "onSubmittedWorkDone", p); err != nil {
+	if _, err := awaitKick(ctx, "onSubmittedWorkDone", p, q.v); err != nil {
 		return err
 	}
 	q.dev.tl.Signal(target)
@@ -105,7 +105,7 @@ func (d *Device) WaitSubmitted(ctx context.Context, seq uint64) error {
 			return err
 		}
 		go func() {
-			if _, err := await(context.Background(), "onSubmittedWorkDone", p); err == nil {
+			if _, err := awaitKick(context.Background(), "onSubmittedWorkDone", p, d.queue.v); err == nil {
 				d.tl.Signal(target)
 			}
 		}()

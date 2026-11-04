@@ -315,7 +315,7 @@ func (b *Buffer) MapAsync(ctx context.Context, mode MapMode, offset, size uint64
 	if err := try("mapAsync", func() { p = b.v.Call("mapAsync", uint32(mode), offset, size) }); err != nil {
 		return err
 	}
-	_, err := await(ctx, "mapAsync", p)
+	_, err := awaitKick(ctx, "mapAsync", p, b.dev.queue.v)
 	return err
 }
 

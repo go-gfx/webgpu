@@ -99,6 +99,18 @@ func await(ctx context.Context, op string, p js.Value) (js.Value, error) {
 	}
 }
 
+// awaitKick is await for a promise that settles when the GPU process polls
+// the device (onSubmittedWorkDone, mapAsync): while it waits, it kicks the
+// queue with empty submits (see kickLoop), which on Firefox turns a 100 ms
+// wait into a sub-millisecond one.
+func awaitKick(ctx context.Context, op string, p, queue js.Value) (js.Value, error) {
+	stop := make(chan struct{})
+	defer close(stop)
+	empty := []any{}
+	go kickLoop(stop, func() { _ = try("submit", func() { queue.Call("submit", empty) }) })
+	return await(ctx, op, p)
+}
+
 // bytesToJS copies b into a Uint8Array of a reusable staging area and
 // returns it. The staging array only grows, by powers of two.
 type staging struct{ u js.Value }
