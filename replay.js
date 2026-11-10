@@ -190,6 +190,18 @@
             if ((w[a + 1] & 7) !== 0 || w[a + 3] === 0 || (w[a + 3] & 3) !== 0 || w[a + 4] + w[a + 3] > 67108864) throw new Error("replay: bad read");
             break;
           }
+          case 35: {
+            if (w[a + 5] > 3) throw new Error("replay: bad texture aspect");
+            if (w[a + 9] % 256 !== 0) throw new Error("replay: bytesPerRow " + w[a + 9] + " is not a multiple of 256");
+            const src = { texture: this.obj(w[a], false), mipLevel: w[a + 1], origin: { x: w[a + 2], y: w[a + 3], z: w[a + 4] } };
+            if (w[a + 5]) src.aspect = aspects[w[a + 5]];
+            const dst = { buffer: this.obj(w[a + 6], false), offset: big(w[a + 7], w[a + 8]) };
+            if (w[a + 9]) dst.bytesPerRow = w[a + 9];
+            if (w[a + 10]) dst.rowsPerImage = w[a + 10];
+            if (enc === null) enc = device.createCommandEncoder();
+            enc.copyTextureToBuffer(src, dst, { width: w[a + 11], height: w[a + 12], depthOrArrayLayers: w[a + 13] });
+            break;
+          }
           case 40: {
             if (enc !== null) queue.submit([enc.finish()]);
             enc = null;

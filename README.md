@@ -67,7 +67,7 @@ where headless Chromium needs Skia on Vulkan to present at all.
 
 A `syscall/js` call costs about ten times the WebGPU call it carries. A
 `Recorder` records a whole submit in Go (buffer and texture writes
-(`WriteBuffer`, `WriteTexture`, `ReadBuffer`: stream version 4), render and compute
+(`WriteBuffer`, `WriteTexture`, `ReadBuffer`, `CopyTextureToBuffer`: stream version 5), render and compute
 passes, dynamic offsets included) as `uint32` words; `Submit` copies them to
 JavaScript once and `replay.js` issues the WebGPU calls:
 
@@ -128,6 +128,20 @@ the sink must be a `ReadSink` (`SubmitRead` fills the window), and
 `Buffer.MapAsync(ctx, MapModeRead, ...)`, `ReadMapped` and `Unmap` work on top
 of it, one submit per map. On a browser device a `Recorder` is its own host and
 `Submit` waits and maps itself.
+
+**Texture read-back** (stream version 5, `wire.CopyTextureToBuffer`).
+`Recorder.CopyTextureToBuffer(src, dstBuffer, layout, size)` records
+`encoder.copyTextureToBuffer`, so a frame is read without a compute pass that
+loads every texel into a storage buffer: copy the texture into a buffer
+(`COPY_DST`, rows padded to 256 bytes, `layout.BytesPerRow` a multiple of
+`wire.CopyBytesPerRowAlignment`), into a `MAP_READ` buffer directly or through
+`CopyBufferToBuffer`, then `ReadBuffer` it. It is checked where it is recorded
+and again by the host: the texture has `COPY_SRC` and is not multisampled, the
+mip level exists, the region lies inside that level on block boundaries, and
+the layout (offset, rows, images; 64-bit arithmetic, overflow refused) lies
+inside the buffer. A `batch.Context` keeps each texture's descriptor from
+`Create` for this and refuses a bad copy with an error wrapping `wire.ErrRange`
+before the backend runs (`webgpu.CheckCopyTextureToBuffer` is the one check).
 
 **The host side** is package **`batch`** (no GOOS constraint): a `Context`
 holds a guest's private id table over a `Backend` and offers the three

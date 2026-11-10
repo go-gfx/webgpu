@@ -16,6 +16,7 @@ func stream() []uint32 {
 		uint32(CopyBufferToBuffer), 1, 0, 0, 2, 0, 0, 4, 0,
 		uint32(CopyTextureToTexture), 2, 0, 1, 2, 0, 1, 3, 0, 0, 0, 0, 3, 4, 4, 1,
 		uint32(WriteTexture), 2, 0, 0, 0, 0, 0, 0, 4, 0, 0, 4, 0, 1, 1, 1,
+		uint32(CopyTextureToBuffer), 2, 0, 0, 0, 0, 0, 1, 0, 0, 256, 4, 4, 4, 1,
 		uint32(BeginRenderPass), 2,
 		3, 2, 2, 1, 0, 0, 0, 0, // color 0: view 3, resolve 2
 		0, 0, 0, 0, 0, 0, 0, 0, // color 1 unused
@@ -52,7 +53,7 @@ func TestDecode(t *testing.T) {
 		ops = append(ops, c.Op)
 		n += 1 + len(c.Args)
 	}
-	want := []Op{WriteBuffer, CopyBufferToBuffer, CopyTextureToTexture, WriteTexture, BeginRenderPass, SetPipeline, SetBindGroup, SetBindGroup,
+	want := []Op{WriteBuffer, CopyBufferToBuffer, CopyTextureToTexture, WriteTexture, CopyTextureToBuffer, BeginRenderPass, SetPipeline, SetBindGroup, SetBindGroup,
 		SetVertexBuffer, SetIndexBuffer, Draw, DrawIndirect, ExecuteBundles, EndPass, BeginComputePass,
 		SetPipeline, DispatchIndirect, EndPass, ReadBuffer, Submit}
 	if !reflect.DeepEqual(ops, want) || n != len(w) {
@@ -126,6 +127,13 @@ func TestDecodeRejects(t *testing.T) {
 		{"read window overflow", []uint32{34, 1, 0, 0, 8, math.MaxUint32}, 0, "read window"},
 		{"read truncated", []uint32{34, 1, 0}, 0, "truncated"},
 		{"read in pass", append(append([]uint32{}, rp...), 34, 1, 0, 0, 4, 0), 0, "out of place"},
+		{"texture to buffer unknown texture", []uint32{35, 9, 0, 0, 0, 0, 0, 1, 0, 0, 256, 4, 4, 4, 1}, 0, "unknown object 9"},
+		{"texture to buffer unknown buffer", []uint32{35, 1, 0, 0, 0, 0, 0, 9, 0, 0, 256, 4, 4, 4, 1}, 0, "unknown object 9"},
+		{"texture to buffer aspect", []uint32{35, 1, 0, 0, 0, 0, 4, 1, 0, 0, 256, 4, 4, 4, 1}, 0, "aspect"},
+		{"texture to buffer bytesPerRow 255", []uint32{35, 1, 0, 0, 0, 0, 0, 1, 0, 0, 255, 4, 4, 4, 1}, 0, "multiple of 256"},
+		{"texture to buffer bytesPerRow 300", []uint32{35, 1, 0, 0, 0, 0, 0, 1, 0, 0, 300, 4, 4, 4, 1}, 0, "multiple of 256"},
+		{"texture to buffer truncated", []uint32{35, 1, 0, 0}, 0, "truncated"},
+		{"texture to buffer in pass", append(append([]uint32{}, rp...), 35, 1, 0, 0, 0, 0, 0, 1, 0, 0, 256, 4, 4, 4, 1), 0, "out of place"},
 		{"texture copy in pass", append(append([]uint32{}, rp...), 32, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1), 0, "out of place"},
 	} {
 		_, err := Decode(c.w, c.ndata, known)
@@ -170,8 +178,9 @@ func TestRemap(t *testing.T) {
 	}
 	// ids: write 1, copy 2, texture copy 2, texture write 1, colour 2,
 	// depth 1, pipeline 1, group 1 (the unbind's 0 stays), vertex 1, index
-	// 1, indirect 1, bundles 2, pipeline 1, dispatch 1, read 1 = 19.
-	if changed != 19 || len(a) != len(b) {
+	// 1, indirect 1, bundles 2, pipeline 1, dispatch 1, read 1, texture to
+	// buffer 2 = 21.
+	if changed != 21 || len(a) != len(b) {
 		t.Fatalf("%d ids changed, %d/%d commands", changed, len(a), len(b))
 	}
 	if seen[0] != 0 {
@@ -202,6 +211,26 @@ func TestRemapReads(t *testing.T) {
 	}
 	if _, ok := ReadOf(Cmd{Op: ReadBuffer, Args: []uint32{1}}); ok {
 		t.Fatal("ReadOf accepted a short command")
+	}
+}
+
+func TestTextureCopyOf(t *testing.T) {
+	w := []uint32{uint32(CopyTextureToBuffer), 2, 3, 4, 5, 6, 1, 1, 8, 1, 512, 7, 9, 10, 11, uint32(Submit)}
+	cmds, err := RemapCmds(w, 0, func(id uint32) (uint32, bool) { return id + 100, known(id) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := TextureCopyOf(cmds[0])
+	want := TextureCopy{Texture: 102, MipLevel: 3, OriginX: 4, OriginY: 5, OriginZ: 6, Aspect: 1, Buffer: 101,
+		Offset: 8 | 1<<32, BytesPerRow: 512, RowsPerImage: 7, Width: 9, Height: 10, Depth: 11}
+	if !ok || got != want {
+		t.Fatalf("%+v %v, want %+v", got, ok, want)
+	}
+	if _, ok := TextureCopyOf(cmds[1]); ok {
+		t.Fatal("TextureCopyOf accepted a Submit")
+	}
+	if _, ok := TextureCopyOf(Cmd{Op: CopyTextureToBuffer, Args: []uint32{1}}); ok {
+		t.Fatal("TextureCopyOf accepted a short command")
 	}
 }
 
