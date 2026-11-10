@@ -340,6 +340,59 @@ func TestRangeRefusals(t *testing.T) {
 	}
 }
 
+// TestDrawQuota (go-gfx/webgpu#30, G3): a draw whose vertex (or index) count
+// times its instance count is above the per-draw quota, or draws that together
+// are above the per-stream quota, are refused before the backend is called,
+// and the peak is recorded.
+func TestDrawQuota(t *testing.T) {
+	draws := func(cmds ...[]uint32) []uint32 {
+		w := []uint32{uint32(wire.BeginRenderPass), 0, 0}
+		for _, c := range cmds {
+			w = append(w, c...)
+		}
+		return append(w, uint32(wire.EndPass))
+	}
+	d := func(v, i uint32) []uint32 { return []uint32{uint32(wire.Draw), v, i, 0, 0} }
+	di := func(n, i uint32) []uint32 { return []uint32{uint32(wire.DrawIndexed), n, i, 0, 0, 0} }
+	const max32 = 1<<32 - 1
+	cfg := Config{MaxDrawVertices: 3 * 100, MaxStreamVertices: 3 * 150}
+	for _, tc := range []struct {
+		name string
+		w    []uint32
+		ok   bool
+	}{
+		{"at the draw quota", draws(d(3, 100)), true},
+		{"over the draw quota", draws(d(3, 101)), false},
+		{"indexed over the draw quota", draws(di(6, 51)), false},
+		{"indexed at the draw quota", draws(di(6, 50)), true},
+		{"two within, together over the stream quota", draws(d(3, 100), di(3, 51)), false},
+		{"two within the stream quota", draws(d(3, 100), di(3, 50)), true},
+		{"vertex count times instance count does not wrap", draws(d(max32, max32)), false},
+		{"two draws that would wrap a 64-bit sum", draws(d(max32, max32), d(max32, max32)), false},
+	} {
+		f := newFake()
+		c := New(f, cfg)
+		err := c.Stream(tc.w, nil, nil)
+		switch {
+		case tc.ok && (err != nil || f.replays != 1):
+			t.Errorf("%s: %v, %d replays", tc.name, err, f.replays)
+		case !tc.ok && (!errors.Is(err, wire.ErrDrawBudget) || f.replays != 0 || c.Lost() == nil):
+			t.Errorf("%s: err %v, %d replays, lost %v", tc.name, err, f.replays, c.Lost())
+		}
+	}
+	// No quota: everything passes and the peak is still recorded, saturated.
+	f := newFake()
+	c := New(f, Config{})
+	if err := c.Stream(draws(d(max32, max32), d(max32, max32)), nil, nil); err != nil || f.replays != 1 ||
+		c.PeakVertices() != 1<<64-1 || c.PeakDrawVertices() != uint64(max32)*uint64(max32) {
+		t.Errorf("no quota: err %v, %d replays, peak %d, largest %d", err, f.replays, c.PeakVertices(), c.PeakDrawVertices())
+	}
+	c = New(newFake(), cfg)
+	if err := c.Stream(draws(d(3, 100), di(3, 50)), nil, nil); err != nil || c.PeakVertices() != 3*150 || c.PeakDrawVertices() != 3*100 {
+		t.Errorf("peak %d, largest draw %d, err %v", c.PeakVertices(), c.PeakDrawVertices(), err)
+	}
+}
+
 // TestInvocationQuota (go-wasmcontainers/gpu#26): a dispatch whose workgroup
 // count times the workgroup bound is above the per-dispatch or per-stream quota
 // is refused before the backend is called, and the peak is recorded.
