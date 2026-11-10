@@ -57,6 +57,12 @@ type LoopBudget struct {
 	Group                uint32 // the reserved bind group
 }
 
+// MaxRenderLoop is the most iterations a loop may have in a module with a
+// vertex or fragment entry point (go-gfx/webgpu#30): such a stage cannot write
+// the truncation flag, so only a constant-bound leaf loop, which the transform
+// recognises as SmallLoop, is accepted.
+const MaxRenderLoop = 64
+
 // Errors of the loop budget.
 var (
 	// ErrReserved: the guest used the bind group the host reserved for its
@@ -135,7 +141,9 @@ func (lb LoopBudget) slot(inv uint64) uint32 {
 // compute entry points is rewritten. It is refused, never passed through, when
 // it cannot be bounded: ErrUnparsable (the host's parser does not accept it),
 // ErrUnbounded (a loop in a module that has a vertex or fragment entry point,
-// whose stages cannot take the storage flag; or the transform failed), and
+// whose stages cannot take the storage flag, unless every such loop is a
+// constant-bound leaf loop of at most MaxRenderLoop iterations; or the
+// transform failed), and
 // ErrReserved (a binding in the reserved group). The caller decides what the
 // browser says first: an invalid module is reported as the browser reports it.
 func (lb LoopBudget) Instrument(code string) (string, bool, error) {
@@ -185,18 +193,28 @@ func (lb LoopBudget) Analyze(code string) (Analysis, error) {
 			}
 		}
 	}
+	small := lb.SmallLoop
+	if render {
+		// A vertex or fragment stage cannot take the storage flag, so a loop
+		// there is accepted only when the transform's SmallLoop notion proves
+		// it bounded: a leaf loop with literal bounds and step, at most
+		// MaxRenderLoop iterations whatever the invocation does (a `break` on
+		// a runtime count is fine: it only shortens it). Such a loop is left
+		// as written. Any other loop is counted by the transform and refused.
+		small = MaxRenderLoop
+	}
 	out, rep, err := rewrite(m, transform.Config{
 		Budget:    transform.BudgetSource{Group: int(lb.Group), Binding: 1},
-		FlagGroup: int(lb.Group), FlagBinding: 0, SmallLoop: lb.SmallLoop,
+		FlagGroup: int(lb.Group), FlagBinding: 0, SmallLoop: small,
 	})
 	if err != nil {
 		return Analysis{}, fmt.Errorf("%w: %v", ErrUnbounded, err)
 	}
-	if !rep.Instrumented || !compute && !render { // no loop; or loops no entry point can run
+	if !rep.Instrumented || !compute && !render { // no loop; or loops no entry point can run; or only small leaf loops of a render module
 		return Analysis{Text: code, Groups: groups}, nil
 	}
 	if render {
-		return Analysis{}, fmt.Errorf("%w: a loop in a module with a vertex or fragment entry point", ErrUnbounded)
+		return Analysis{}, fmt.Errorf("%w: a loop in a module with a vertex or fragment entry point that is not a constant-bound loop of at most %d iterations", ErrUnbounded, MaxRenderLoop)
 	}
 	return Analysis{Text: wgsl.Print(out), Rewritten: true, Groups: groups}, nil
 }

@@ -159,7 +159,14 @@ only, so that each loop nest stops at `Work / invocations` iterations
 flag is set fails with `batch.ErrTruncated` and its results are not returned.
 Nothing unbounded runs: a module the host cannot bound (WGSL its parser does not
 accept, a loop in a module with a vertex or fragment entry point, a rewrite the
-browser refuses) is refused with `batch.ErrUnbounded`, after the browser has
+browser refuses) is refused with `batch.ErrUnbounded`. A render stage cannot
+write the flag, so a module with a vertex or fragment entry point is accepted,
+unchanged, only if every loop in it is a constant-bound leaf loop of at most
+`batch.MaxRenderLoop` (64) iterations, `for (var i = 0u; i < 64u; i++)` with
+literal bounds and step, no inner loop and no assignment to `i`; a `break` on a
+runtime count (`if (i >= n) { break; }`, `n` read from a storage buffer) is
+fine. `i < n`, 65 iterations, nested loops, `loop {}` and `while` stay
+refused. The refusal comes after the browser has
 given its own verdict on the guest's text (an invalid module is reported as the
 browser reports it). The host keeps the last bind group (`maxBindGroups - 1`, 3
 by default) for it; a guest that uses it is refused with `batch.ErrReserved`.
