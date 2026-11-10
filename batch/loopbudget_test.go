@@ -61,6 +61,47 @@ func TestInstrumentRefusesWhatItCannotBound(t *testing.T) {
 	}
 }
 
+const renderHead = `@group(0) @binding(0) var<storage, read> counts: array<u32>;
+@vertex fn v(@builtin(vertex_index) k: u32) -> @builtin(position) vec4f { `
+const renderTail = ` return vec4f(f32(s)); }`
+
+func renderLoop(loop string) string { return renderHead + "var s = 0u; " + loop + renderTail }
+
+// A render module's constant-bound loops of at most 64 iterations are accepted
+// unchanged (go-gfx/webgpu#30, G1).
+func TestInstrumentAcceptsSmallRenderLoops(t *testing.T) {
+	for name, src := range map[string]string{
+		"engine shape": renderLoop(`let n = counts[k]; for (var i = 0u; i < 64u; i++) { if (i >= n) { break; } s += i; }`),
+		"no break":     renderLoop(`for (var i = 0u; i < 8u; i++) { s += i; }`),
+		"inclusive":    renderLoop(`for (var i = 1u; i <= 64u; i++) { s += i; }`),
+		"stepped":      renderLoop(`for (var i = 0u; i < 128u; i += 2u) { s += i; }`),
+		"two loops":    renderLoop(`for (var i = 0u; i < 64u; i++) { s += i; } for (var j = 0u; j < 3u; j++) { s += j; }`),
+		"fragment":     `@fragment fn f() -> @location(0) vec4f { var s = 0u; for (var i = 0u; i < 64u; i++) { if (i >= 5u) { break; } s += i; } return vec4f(f32(s)); }`,
+	} {
+		out, ok, err := lb.Instrument(src)
+		if err != nil || ok || out != src {
+			t.Errorf("%s: ok=%v err=%v changed=%v", name, ok, err, out != src)
+		}
+	}
+}
+
+func TestInstrumentRefusesOtherRenderLoops(t *testing.T) {
+	for name, src := range map[string]string{
+		"bound not constant": renderLoop(`for (var i = 0u; i < counts[k]; i++) { s += i; }`),
+		"65 iterations":      renderLoop(`for (var i = 0u; i < 65u; i++) { s += i; }`),
+		"inclusive 65":       renderLoop(`for (var i = 0u; i <= 64u; i++) { s += i; }`),
+		"nested":             renderLoop(`for (var i = 0u; i < 4u; i++) { for (var j = 0u; j < 4u; j++) { s += j; } }`),
+		"loop":               renderLoop(`loop { s += 1u; if (s > 3u) { break; } }`),
+		"while":              renderLoop(`while (s < 3u) { s += 1u; }`),
+		"counter assigned":   renderLoop(`for (var i = 0u; i < 4u; i++) { i = 0u; s += 1u; }`),
+	} {
+		out, ok, err := lb.Instrument(src)
+		if !errors.Is(err, ErrUnbounded) || ok || out != "" {
+			t.Errorf("%s: out=%q ok=%v err=%v", name, out, ok, err)
+		}
+	}
+}
+
 func TestInstrumentRefusesReservedGroup(t *testing.T) {
 	for _, g := range []string{"@group(3) @binding(0)", "@group(3u) @binding(7)"} {
 		src := g + ` var<uniform> u: u32; @compute @workgroup_size(1) fn main() {}`
