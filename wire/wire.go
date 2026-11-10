@@ -21,7 +21,12 @@ import "fmt"
 // check they speak the same stream.
 //
 // 2 added CopyTextureToTexture. 3 added WriteTexture. 4 added ReadBuffer.
-const StreamVersion = 4
+// 5 added CopyTextureToBuffer.
+const StreamVersion = 5
+
+// CopyBytesPerRowAlignment is the multiple a CopyTextureToBuffer's
+// bytesPerRow must be (WebGPU: encoder texel copies, 256).
+const CopyBytesPerRowAlignment = 256
 
 // MaxReadWindow bounds the read window of one submit (ReadBuffer's
 // windowOffset + size), 64 MiB. A host grants a smaller one.
@@ -72,7 +77,14 @@ const (
 	// (the mapAsync rules of the WebGPU specification). replay.js ignores
 	// the command: a host performs it after the replay, in stream order.
 	ReadBuffer Op = 34
-	Submit     Op = 40
+	// texture mip x y z aspect buffer offset(2) bytesPerRow rowsPerImage
+	// width height depthOrArrayLayers: encoder.copyTextureToBuffer. Aspect as
+	// in CopyTextureToTexture. bytesPerRow is a multiple of 256 (0 is one
+	// block row at most). The texture needs COPY_SRC and the buffer COPY_DST;
+	// a host checks the region against the texture's mip level and the layout
+	// against the buffer's size (TextureCopyOf, webgpu.CheckCopyTextureToBuffer).
+	CopyTextureToBuffer Op = 35
+	Submit              Op = 40
 )
 
 // Limits the readers enforce on counts inside one command.
@@ -94,7 +106,7 @@ var argc = map[Op]int{
 	SetIndexBuffer: 6, SetViewport: 6, SetScissorRect: 4, SetBlendConstant: 4,
 	SetStencilReference: 1, ExecuteBundles: -1, DrawIndirect: 3, DrawIndexedIndirect: 3,
 	BeginRenderPass: -1, EndPass: 0, BeginComputePass: 0, Dispatch: 3, DispatchIndirect: 3,
-	WriteBuffer: 5, CopyBufferToBuffer: 8, CopyTextureToTexture: 15, WriteTexture: 15, ReadBuffer: 5, Submit: 0,
+	WriteBuffer: 5, CopyBufferToBuffer: 8, CopyTextureToTexture: 15, WriteTexture: 15, ReadBuffer: 5, CopyTextureToBuffer: 14, Submit: 0,
 }
 
 // where each opcode may appear: 0 outside a pass, 1 render pass, 2
@@ -104,7 +116,7 @@ var opPlace = map[Op]int{
 	SetIndexBuffer: 1, SetViewport: 1, SetScissorRect: 1, SetBlendConstant: 1,
 	SetStencilReference: 1, ExecuteBundles: 1, DrawIndirect: 1, DrawIndexedIndirect: 1,
 	BeginRenderPass: 0, EndPass: -1, BeginComputePass: 0, Dispatch: 2, DispatchIndirect: 2,
-	WriteBuffer: 0, CopyBufferToBuffer: 0, CopyTextureToTexture: 0, WriteTexture: 0, ReadBuffer: 0, Submit: 0,
+	WriteBuffer: 0, CopyBufferToBuffer: 0, CopyTextureToTexture: 0, WriteTexture: 0, ReadBuffer: 0, CopyTextureToBuffer: 0, Submit: 0,
 }
 
 // Decode reads a stream with replay.js's checks and returns its commands.
@@ -276,6 +288,16 @@ func walk(w []uint32, ndata uint32, obj func(pos int, nullable bool) error, emit
 			if err = obj(at, false); err == nil {
 				err = checkRead(a)
 			}
+		case CopyTextureToBuffer:
+			if err = obj(at, false); err == nil {
+				err = obj(at+6, false)
+			}
+			if err == nil && a[5] > 3 {
+				err = fmt.Errorf("replay: bad texture aspect")
+			}
+			if err == nil && a[9]%CopyBytesPerRowAlignment != 0 {
+				err = fmt.Errorf("replay: bytesPerRow %d is not a multiple of %d", a[9], CopyBytesPerRowAlignment)
+			}
 		case CopyTextureToTexture:
 			if err = obj(at, false); err == nil {
 				err = obj(at+6, false)
@@ -310,6 +332,32 @@ func ReadOf(c Cmd) (Read, bool) {
 	}
 	a := c.Args
 	return Read{ID: a[0], Offset: uint64(a[1]) | uint64(a[2])<<32, Size: a[3], WindowOffset: a[4]}, true
+}
+
+// TextureCopy is a decoded CopyTextureToBuffer command.
+type TextureCopy struct {
+	Texture              uint32 // the replayer's id after Remap
+	MipLevel             uint32
+	OriginX, OriginY     uint32
+	OriginZ              uint32
+	Aspect               uint32 // 0 default, 1 all, 2 stencil-only, 3 depth-only
+	Buffer               uint32
+	Offset               uint64 // into the buffer
+	BytesPerRow          uint32 // a multiple of 256
+	RowsPerImage         uint32
+	Width, Height, Depth uint32
+}
+
+// TextureCopyOf decodes c if it is a CopyTextureToBuffer command a reader
+// returned.
+func TextureCopyOf(c Cmd) (TextureCopy, bool) {
+	if c.Op != CopyTextureToBuffer || len(c.Args) != 14 {
+		return TextureCopy{}, false
+	}
+	a := c.Args
+	return TextureCopy{Texture: a[0], MipLevel: a[1], OriginX: a[2], OriginY: a[3], OriginZ: a[4], Aspect: a[5],
+		Buffer: a[6], Offset: u64(a[7], a[8]), BytesPerRow: a[9], RowsPerImage: a[10],
+		Width: a[11], Height: a[12], Depth: a[13]}, true
 }
 
 // RemapReads is Remap that also returns the stream's ReadBuffer commands,
