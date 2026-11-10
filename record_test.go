@@ -64,13 +64,16 @@ func recordAll(t *testing.T) (*Recorder, []opcode) {
 	}
 	wt := tex(TextureDescriptor{Size: Extent3D{Width: 4, Height: 2}, Format: TextureFormatRGBA8Unorm, Usage: TextureUsageCopyDst})
 	r.WriteTexture(TexelCopyTextureInfo{Texture: wt, Origin: Origin3D{X: 1}}, make([]byte, 16), TexelCopyBufferLayout{Offset: 4, BytesPerRow: 16, RowsPerImage: 2}, Extent3D{Width: 2, Height: 1})
+	rt := tex(TextureDescriptor{Size: Extent3D{Width: 4, Height: 2}, Format: TextureFormatRGBA8Unorm, Usage: TextureUsageCopySrc})
+	r.CopyTextureToBuffer(TexelCopyTextureInfo{Texture: rt, Origin: Origin3D{X: 1}, Aspect: TextureAspectAll}, buf(512, BufferUsageCopyDst),
+		TexelCopyBufferLayout{Offset: 8, BytesPerRow: 256, RowsPerImage: 2}, Extent3D{Width: 3, Height: 2})
 	if err := r.finish(); err != nil {
 		t.Fatal(err)
 	}
 	return r, []opcode{opWriteBuffer, opCopyBufferToBuffer, opCopyTextureToTexture, opBeginRenderPass, opSetPipeline, opSetBindGroup, opSetBindGroup, opSetBindGroup,
 		opSetVertexBuffer, opSetIndexBuffer, opSetViewport, opSetScissorRect, opSetBlendConstant, opSetStencilReference, opDraw, opDrawIndexed,
 		opDrawIndirect, opDrawIndexedIndirect, opExecuteBundles, opEndPass, opBeginComputePass, opSetPipeline, opSetBindGroup, opDispatch,
-		opDispatchIndirect, opEndPass, opWriteTexture, opSubmit}
+		opDispatchIndirect, opEndPass, opWriteTexture, opCopyTextureToBuffer, opSubmit}
 }
 
 func TestRecordDecodeRoundTrip(t *testing.T) {
@@ -98,7 +101,12 @@ func TestRecordDecodeRoundTrip(t *testing.T) {
 	}
 	// writeTexture: texture id, mip 0, origin (1,0,0), aspect 0, bytes [8,+16),
 	// layout offset 4, 16 bytes per row, 2 rows per image, extent 2x1x1.
-	if a := cmds[len(cmds)-2].Args; a[1] != 0 || a[2] != 1 || a[5] != 0 || a[6] != 8 || a[7] != 16 || a[8] != 4 || a[9] != 0 ||
+	// copyTextureToBuffer: mip 0, origin (1,0,0), aspect all, buffer offset 8,
+	// 256 bytes per row, 2 rows per image, extent 3x2x1.
+	if a := cmds[len(cmds)-2].Args; len(a) != 14 || a[1] != 0 || a[2] != 1 || a[5] != 1 || a[7] != 8 || a[8] != 0 || a[9] != 256 || a[10] != 2 || a[11] != 3 || a[12] != 2 || a[13] != 1 {
+		t.Fatalf("copyTextureToBuffer %v", a)
+	}
+	if a := cmds[len(cmds)-3].Args; a[1] != 0 || a[2] != 1 || a[5] != 0 || a[6] != 8 || a[7] != 16 || a[8] != 4 || a[9] != 0 ||
 		a[10] != 16 || a[11] != 2 || a[12] != 2 || a[13] != 1 || a[14] != 1 {
 		t.Fatalf("writeTexture %v", a)
 	}

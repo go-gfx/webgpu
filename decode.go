@@ -36,6 +36,7 @@ const (
 	opCopyTextureToTexture = wire.CopyTextureToTexture
 	opWriteTexture         = wire.WriteTexture
 	opReadBuffer           = wire.ReadBuffer
+	opCopyTextureToBuffer  = wire.CopyTextureToBuffer
 	opSubmit               = wire.Submit
 )
 

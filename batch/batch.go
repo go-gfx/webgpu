@@ -105,8 +105,9 @@ type Context struct {
 	be      Backend
 	rd      Reader
 	cfg     Config
-	ids     map[uint32]uint32  // guest id -> backend id
-	bufs    map[uint32]bufInfo // backend id -> buffer size and usage
+	ids     map[uint32]uint32                   // guest id -> backend id
+	bufs    map[uint32]bufInfo                  // backend id -> buffer size and usage
+	texs    map[uint32]webgpu.TextureDescriptor // backend id -> texture descriptor
 	lost    error
 	maxRead uint64
 	peak    uint64
@@ -123,7 +124,7 @@ func (c *Context) PeakDispatchInvocations() uint64 { return c.peakDispatch }
 
 // New returns a Context on be. If be is a Reader, streams may read back.
 func New(be Backend, cfg Config) *Context {
-	c := &Context{be: be, cfg: cfg, ids: map[uint32]uint32{}, bufs: map[uint32]bufInfo{}}
+	c := &Context{be: be, cfg: cfg, ids: map[uint32]uint32{}, bufs: map[uint32]bufInfo{}, texs: map[uint32]webgpu.TextureDescriptor{}}
 	c.rd, _ = be.(Reader)
 	c.maxRead = uint64(cfg.MaxRead)
 	if c.maxRead == 0 {
@@ -176,6 +177,14 @@ func (c *Context) Create(id, kind uint32, desc []byte) error {
 			c.bufs[h] = bufInfo{size: bd.Size, usage: bd.Usage}
 		}
 	}
+	if wire.Kind(kind) == wire.KindTexture {
+		// A texture's descriptor bounds the copies out of it, as a buffer's
+		// size bounds its reads; one the decoder refuses is not copyable.
+		d, err := webgpu.DecodeDescriptor(wire.KindTexture, desc, nil)
+		if td, ok := d.(webgpu.TextureDescriptor); err == nil && ok {
+			c.texs[h] = td
+		}
+	}
 	return nil
 }
 
@@ -192,6 +201,7 @@ func (c *Context) Destroy(ids ...uint32) error {
 		c.be.Destroy(h)
 		delete(c.ids, id)
 		delete(c.bufs, h)
+		delete(c.texs, h)
 	}
 	return nil
 }
@@ -214,6 +224,9 @@ func (c *Context) Stream(words []uint32, data []byte, window []byte) error {
 	// What wire.Decode cannot know and WebGPU would only refuse later: buffer
 	// ranges and dispatch sizes, checked here before the backend is called.
 	if err := wire.CheckRanges(cmds, func(id uint32) (uint64, bool) { b, ok := c.bufs[id]; return b.size, ok }, c.cfg.MaxWorkgroups); err != nil {
+		return c.fail(err)
+	}
+	if err := c.checkTextureCopies(cmds); err != nil {
 		return c.fail(err)
 	}
 	wgi := c.cfg.WorkgroupInvocations
@@ -243,6 +256,38 @@ func (c *Context) Stream(words []uint32, data []byte, window []byte) error {
 		dst := window[r.WindowOffset : r.WindowOffset+r.Size]
 		if err := c.rd.Read(r.ID, r.Offset, dst); err != nil {
 			return c.fail(err)
+		}
+	}
+	return nil
+}
+
+// checkTextureCopies refuses, before the backend is called, a
+// CopyTextureToBuffer that WebGPU would refuse (and lose the device over):
+// objects that are not a texture and a buffer with known descriptors, a
+// region outside the texture's mip level, a layout outside the buffer, a
+// bytesPerRow that is not a multiple of 256, a missing usage. The error wraps
+// wire.ErrRange.
+func (c *Context) checkTextureCopies(cmds []wire.Cmd) error {
+	for _, cmd := range cmds {
+		tc, ok := wire.TextureCopyOf(cmd)
+		if !ok {
+			continue
+		}
+		td, ok := c.texs[tc.Texture]
+		if !ok {
+			return fmt.Errorf("%w: CopyTextureToBuffer: object %d is not a texture with a known descriptor", wire.ErrRange, tc.Texture)
+		}
+		b, ok := c.bufs[tc.Buffer]
+		if !ok {
+			return fmt.Errorf("%w: CopyTextureToBuffer: object %d is not a buffer with a known descriptor", wire.ErrRange, tc.Buffer)
+		}
+		aspect := [...]webgpu.TextureAspect{"", webgpu.TextureAspectAll, webgpu.TextureAspectStencilOnly, webgpu.TextureAspectDepthOnly}[tc.Aspect&3]
+		err := webgpu.CheckCopyTextureToBuffer(td,
+			webgpu.TexelCopyTextureInfo{MipLevel: tc.MipLevel, Origin: webgpu.Origin3D{X: tc.OriginX, Y: tc.OriginY, Z: tc.OriginZ}, Aspect: aspect},
+			b.size, b.usage, webgpu.TexelCopyBufferLayout{Offset: tc.Offset, BytesPerRow: tc.BytesPerRow, RowsPerImage: tc.RowsPerImage},
+			webgpu.Extent3D{Width: tc.Width, Height: tc.Height, DepthOrArrayLayers: tc.Depth})
+		if err != nil {
+			return fmt.Errorf("%w: %v", wire.ErrRange, err)
 		}
 	}
 	return nil
@@ -284,5 +329,6 @@ func (c *Context) checkReads(reads []wire.Read, window []byte) error {
 func (c *Context) Close() {
 	clear(c.ids)
 	clear(c.bufs)
+	clear(c.texs)
 	c.be.Close()
 }
