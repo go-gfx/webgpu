@@ -74,6 +74,11 @@ type Config struct {
 	// the Dispatches of one stream together, in invocations (0: no bound);
 	// see wire.CheckInvocations. A DispatchIndirect is not counted.
 	MaxDispatchInvocations, MaxStreamInvocations uint64
+	// MaxDrawVertices bounds one Draw or DrawIndexed, and MaxStreamVertices
+	// the draws of one stream together, in vertex invocations: vertexCount
+	// (indexCount for DrawIndexed) times instanceCount (0: no bound); see
+	// wire.CheckDraws. An indirect draw is not counted.
+	MaxDrawVertices, MaxStreamVertices uint64
 }
 
 // Errors. Every refusal wraps one; after any error the Context is lost.
@@ -113,7 +118,17 @@ type Context struct {
 	peak    uint64
 	// peakDispatch is the largest single Dispatch seen.
 	peakDispatch uint64
+	// peakVertices is the most vertex invocations one stream asked for, and
+	// peakDraw the largest single draw.
+	peakVertices, peakDraw uint64
 }
+
+// PeakVertices is the most vertex invocations the draws of one stream of this
+// context asked for (wire.CheckDraws' total): what a stream draw quota would
+// have to allow. PeakDrawVertices is the largest single draw: what a draw
+// quota would have to allow.
+func (c *Context) PeakVertices() uint64     { return c.peakVertices }
+func (c *Context) PeakDrawVertices() uint64 { return c.peakDraw }
 
 // PeakInvocations is the most invocations one stream of this context asked
 // for (wire.CheckInvocations' total): what a stream quota would have to
@@ -238,6 +253,11 @@ func (c *Context) Stream(words []uint32, data []byte, window []byte) error {
 		return c.fail(err)
 	}
 	c.peak, c.peakDispatch = max(c.peak, total), max(c.peakDispatch, largest)
+	vtotal, vlargest, err := wire.CheckDraws(cmds, c.cfg.MaxDrawVertices, c.cfg.MaxStreamVertices)
+	if err != nil {
+		return c.fail(err)
+	}
+	c.peakVertices, c.peakDraw = max(c.peakVertices, vtotal), max(c.peakDraw, vlargest)
 	var reads []wire.Read
 	for _, cmd := range cmds {
 		if r, ok := wire.ReadOf(cmd); ok {

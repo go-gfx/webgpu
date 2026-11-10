@@ -163,7 +163,15 @@ refuses, with `wire.ErrBudget` (which wraps `wire.ErrRange`), a stream asking
 for more invocations than the quota; `Context.PeakInvocations` and
 `PeakDispatchInvocations` report the largest stream and the largest dispatch
 seen. An indirect dispatch takes its counts from GPU memory and
-is not counted; a time budget in the host is what bounds it. WebGPU validation
+is not counted; a time budget in the host is what bounds it. A draw quota is
+its render counterpart: `wire.CheckDraws` (`Config.MaxDrawVertices` per draw,
+`Config.MaxStreamVertices` per stream) counts each `Draw` at `vertexCount ×
+instanceCount` and each `DrawIndexed` at `indexCount × instanceCount`, sums
+saturating at the largest `uint64` (never wrapping), and refuses a stream above
+the quota with `wire.ErrDrawBudget` (which also wraps `wire.ErrRange`) before the
+backend is called, so nothing of it runs; `Context.PeakVertices` and
+`PeakDrawVertices` report the largest stream and the largest draw seen. Indirect
+draws and the draws inside executed render bundles are not counted. WebGPU validation
 stays the second line. A loop that runs for seconds is not something a dispatch
 count can see, and WebGPU cannot cancel submitted work, so a backend can cut it
 (`DeviceBackend.SetLoopBudget(batch.LoopBudget{...})`, go-gfx/wgsl
