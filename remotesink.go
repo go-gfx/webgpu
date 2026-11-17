@@ -13,7 +13,9 @@ type RemoteSink interface {
 	// Create makes object id of kind from a wire descriptor
 	// (EncodeDescriptor's bytes).
 	Create(id uint32, kind wire.Kind, desc []byte) error
-	// Destroy releases object id.
+	// Destroy releases object id. It is also called when a handle is
+	// garbage collected without being destroyed (from the runtime's cleanup
+	// goroutine), before the id can be reused.
 	Destroy(id uint32) error
 	// Submit executes one Recorder submit and returns once it has
 	// executed (a fenced virtio submission), or with the error that lost

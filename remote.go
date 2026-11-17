@@ -50,7 +50,17 @@ func (d *Device) send(o *object, desc any) error {
 	if err != nil {
 		return err
 	}
-	return d.remote.Create(idOf(o), kind, b)
+	id := idOf(o)
+	if err := d.remote.Create(id, kind, b); err != nil {
+		return err
+	}
+	registry.mu.Lock()
+	if registry.live == nil {
+		registry.live = map[uint32]RemoteSink{}
+	}
+	registry.live[id] = d.remote
+	registry.mu.Unlock()
+	return nil
 }
 
 // lose records that the remote device failed: everything is refunded and
@@ -211,7 +221,11 @@ func (d *Device) CreateComputePipeline(desc ComputePipelineDescriptor) (*Compute
 
 func (d *Device) destroy(o *object) {
 	if d != nil && d.remote != nil {
-		_ = d.remote.Destroy(idOf(o))
+		id := idOf(o)
+		registry.mu.Lock()
+		delete(registry.live, id)
+		registry.mu.Unlock()
+		_ = d.remote.Destroy(id)
 	}
 }
 
