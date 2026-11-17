@@ -15,6 +15,10 @@ type object struct {
 	id    uint32        // replay table slot, 0 until first recorded; guarded by registry.mu
 	put   bool          // the slot holds the object; guarded by registry.mu
 	ready atomic.Uint32 // id once put: the lock-free path of batchID
+	// deps are the objects a remote object's creation named (a bind group's
+	// buffers, a view's texture, a pipeline's modules): the host object uses
+	// them, so they stay reachable, and undestroyed, as long as it does.
+	deps []*object
 }
 
 // Label returns the label the object was created with.
