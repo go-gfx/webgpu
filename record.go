@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"slices"
 	"sync"
 )
 
@@ -33,6 +34,9 @@ var registry struct {
 	mu   sync.Mutex
 	next uint32
 	free []uint32
+	// live maps the id of an object a remote sink created, and that was not
+	// destroyed, to that sink.
+	live map[uint32]RemoteSink
 	// drop clears a slot of replay.js's table. Set under GOOS=js; tests
 	// set their own.
 	drop func(id uint32)
@@ -90,12 +94,24 @@ func (o *object) rearm() {
 func freeID(id uint32) {
 	registry.mu.Lock()
 	drop := registry.drop
+	sink := registry.live[id]
+	delete(registry.live, id)
 	registry.mu.Unlock()
 	if drop != nil {
 		drop(id)
 	}
+	// A remote object the host still holds is destroyed before its id can be
+	// handed to another object: a CREATE of a live id is refused by the host
+	// and loses the device. (An object destroyed explicitly is no longer in
+	// registry.live.) The DESTROY goes out in call order with the stream.
+	if sink != nil {
+		_ = sink.Destroy(id)
+	}
 	registry.mu.Lock()
-	registry.free = append(registry.free, id)
+	// An id on the free list twice would be handed to two live objects.
+	if !slices.Contains(registry.free, id) {
+		registry.free = append(registry.free, id)
+	}
 	registry.mu.Unlock()
 }
 
