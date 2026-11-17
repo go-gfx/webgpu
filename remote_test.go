@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/go-gfx/webgpu/wire"
@@ -14,6 +15,7 @@ import (
 
 // sink is a RemoteSink that keeps what it receives and can fail.
 type sink struct {
+	mu        sync.Mutex // guards destroyed
 	objs      map[uint32]created
 	destroyed []uint32
 	submits   [][]uint32
@@ -35,7 +37,20 @@ func (s *sink) Create(id uint32, kind wire.Kind, desc []byte) error {
 	return nil
 }
 
-func (s *sink) Destroy(id uint32) error { s.destroyed = append(s.destroyed, id); return nil }
+// Destroy also comes from the runtime's cleanup goroutine, for a handle that
+// was collected, so it takes the lock.
+func (s *sink) Destroy(id uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.destroyed = append(s.destroyed, id)
+	return nil
+}
+
+func (s *sink) destroyedIDs() []uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]uint32(nil), s.destroyed...)
+}
 
 func (s *sink) Submit(words []uint32, _ []byte) error {
 	if s.fail != nil {
@@ -126,13 +141,24 @@ func TestRemoteDevice(t *testing.T) {
 	}
 
 	// Releases reach the sink once each and refund the quota.
+	ids := []uint32{idOf(&buf.object), idOf(&tex.object), idOf(&cp.object), idOf(&rp.object)}
 	buf.Destroy()
 	buf.Destroy()
 	tex.Destroy()
 	cp.Release()
 	rp.Release()
-	if len(s.destroyed) != 4 {
-		t.Errorf("%d destroys", len(s.destroyed))
+	// (a handle collected meanwhile is destroyed too, so count only these four)
+	dests := s.destroyedIDs()
+	for _, id := range ids {
+		n := 0
+		for _, g := range dests {
+			if g == id {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("object %d destroyed %d times", id, n)
+		}
 	}
 	if m, p := d.Quota().Usage(); m != 0 || p != 0 {
 		t.Errorf("quota after release: %d bytes, %d pipelines", m, p)
