@@ -117,3 +117,28 @@ func TestBindGroupKeepsItsResources(t *testing.T) {
 	}
 	runtime.KeepAlive(bg)
 }
+
+// TestDescDeps: the objects each creation descriptor names.
+func TestDescDeps(t *testing.T) {
+	tex, view, smp, buf := &Texture{}, &TextureView{}, &Sampler{}, &Buffer{}
+	lay, mod, mod2 := &BindGroupLayout{}, &ShaderModule{}, &ShaderModule{}
+	pl := &PipelineLayout{}
+	for _, c := range []struct {
+		name string
+		desc any
+		want int
+	}{
+		{"view", TextureViewCreation{Texture: tex}, 1},
+		{"pipeline layout", PipelineLayoutDescriptor{BindGroupLayouts: []*BindGroupLayout{lay, lay}}, 2},
+		{"bind group", BindGroupDescriptor{Layout: lay, Entries: []BindGroupEntry{{Buffer: buf}, {Sampler: smp}, {TextureView: view}}}, 4},
+		{"render, all", RenderPipelineDescriptor{Layout: pl, Vertex: VertexState{Module: mod}, Fragment: &FragmentState{Module: mod2}}, 3},
+		{"render, none", RenderPipelineDescriptor{Vertex: VertexState{Module: mod}}, 1},
+		{"compute", ComputePipelineDescriptor{Layout: pl, Compute: ProgrammableStage{Module: mod}}, 2},
+		{"compute, no layout", ComputePipelineDescriptor{Compute: ProgrammableStage{Module: mod}}, 1},
+		{"buffer", BufferDescriptor{}, 0},
+	} {
+		if got := len(descDeps(c.desc)); got != c.want {
+			t.Errorf("%s: %d dependencies, want %d", c.name, got, c.want)
+		}
+	}
+}
