@@ -5,6 +5,7 @@ package batch
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/go-gfx/webgpu"
@@ -57,23 +58,36 @@ func (f readFake) Read(id uint32, offset uint64, dst []byte) error {
 
 // toBatch is the RemoteSink a guest's remote device talks to; it is the
 // whole of a transport, minus framing.
-type toBatch struct{ c *Context }
+type toBatch struct {
+	mu *sync.Mutex // the Context is not safe for concurrent use, and Destroy of a collected handle comes from the cleanup goroutine
+	c  *Context
+}
 
 func (s toBatch) Create(id uint32, kind wire.Kind, desc []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.c.Create(id, uint32(kind), append([]byte(nil), desc...))
 }
-func (s toBatch) Destroy(id uint32) error { return s.c.Destroy(id) }
+func (s toBatch) Destroy(id uint32) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.c.Destroy(id)
+}
 func (s toBatch) Submit(w []uint32, d []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.c.Stream(append([]uint32(nil), w...), append([]byte(nil), d...), nil)
 }
 func (s toBatch) SubmitRead(w []uint32, d []byte, window []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.c.Stream(append([]uint32(nil), w...), append([]byte(nil), d...), window)
 }
 
 func guest(t *testing.T, cfg Config, be Backend) (*webgpu.Device, *Context) {
 	t.Helper()
 	c := New(be, cfg)
-	return webgpu.NewRemoteDevice(toBatch{c}, "guest", nil), c
+	return webgpu.NewRemoteDevice(toBatch{&sync.Mutex{}, c}, "guest", nil), c
 }
 
 func buffer(t *testing.T, d *webgpu.Device, size uint64, u webgpu.BufferUsage) *webgpu.Buffer {

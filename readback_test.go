@@ -27,7 +27,7 @@ func (s *readSink) SubmitRead(words []uint32, data []byte, window []byte) error 
 
 func readDevice(t *testing.T, q *Quota) (*Device, *readSink, *Buffer) {
 	t.Helper()
-	s := &readSink{sink: *newSink()}
+	s := &readSink{sink: sink{objs: map[uint32]created{}}}
 	d := NewRemoteDevice(s, "guest", q)
 	b, err := d.CreateBuffer(BufferDescriptor{Size: 64, Usage: BufferUsageMapRead | BufferUsageCopyDst})
 	if err != nil {
