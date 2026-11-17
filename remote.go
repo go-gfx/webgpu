@@ -54,6 +54,7 @@ func (d *Device) send(o *object, desc any) error {
 	if err := d.remote.Create(id, kind, b); err != nil {
 		return err
 	}
+	o.deps = descDeps(desc)
 	registry.mu.Lock()
 	if registry.live == nil {
 		registry.live = map[uint32]RemoteSink{}
@@ -395,4 +396,45 @@ func (d *Device) WaitSubmitted(ctx context.Context, seq uint64) error {
 		return bounds("WaitSubmitted", "submission %d was never made (last %d)", seq, d.tl.Submitted())
 	}
 	return d.tl.Wait(ctx, seq)
+}
+
+// descDeps lists the objects a creation descriptor names. EncodeDescriptor
+// has checked them (none nil where it matters).
+func descDeps(desc any) []*object {
+	var deps []*object
+	add := func(o *object) { deps = append(deps, o) }
+	switch d := desc.(type) {
+	case TextureViewCreation:
+		add(&d.Texture.object)
+	case PipelineLayoutDescriptor:
+		for _, l := range d.BindGroupLayouts {
+			add(&l.object)
+		}
+	case BindGroupDescriptor:
+		add(&d.Layout.object)
+		for _, e := range d.Entries {
+			switch {
+			case e.Buffer != nil:
+				add(&e.Buffer.object)
+			case e.Sampler != nil:
+				add(&e.Sampler.object)
+			case e.TextureView != nil:
+				add(&e.TextureView.object)
+			}
+		}
+	case RenderPipelineDescriptor:
+		if d.Layout != nil {
+			add(&d.Layout.object)
+		}
+		add(&d.Vertex.Module.object)
+		if d.Fragment != nil {
+			add(&d.Fragment.Module.object)
+		}
+	case ComputePipelineDescriptor:
+		if d.Layout != nil {
+			add(&d.Layout.object)
+		}
+		add(&d.Compute.Module.object)
+	}
+	return deps
 }
